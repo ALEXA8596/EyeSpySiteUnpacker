@@ -230,11 +230,10 @@ export default function BatchProcessor() {
   const [currentProcessingIndex, setCurrentProcessingIndex] = useState(-1);
   const [globalLog, setGlobalLog] = useState<string[]>([]);
 
-  // load bootstrap - CSS only (JS disabled to prevent Next.js conflicts)
-  // useEffect(() => {
-  //   // Using non-null assertion to avoid TypeScript error for missing declaration file
-  //   import("bootstrap/dist/js/bootstrap.bundle.min.js" as any);
-  // }, []);
+  useEffect(() => {
+    // Using non-null assertion to avoid TypeScript error for missing declaration file
+    import("bootstrap/dist/js/bootstrap.bundle.min.js" as any);
+  }, []);
 
   const parseWebsiteList = (text: string): string[] => {
     return text

@@ -27,13 +27,7 @@ export async function POST(request: NextRequest) {
     `\n\nThe script will be read by 2 alternating speakers. Structure the script so that each paragraph represents a block of text to be read by one speaker before switching to the other. Ensure paragraphs are separated by a double newline (\\n\\n). Do not label the speakers (e.g., "Host 1:", "Speaker 2:").`;
 
   const client = new GoogleGenAI({
-    vertexai: true,
-    project: process.env.GOOGLE_PROJECT_ID,
-    location: process.env.GOOGLE_LOCATION || "us-central1",
-    // credentials: {
-    //   client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    //   private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-    // }
+    apiKey: process.env.GOOGLE_API_KEY || "",
   });
 
   type PageBody = {
@@ -178,10 +172,7 @@ export async function POST(request: NextRequest) {
 
     // Creates a client
     const ttsClient = new textToSpeech.TextToSpeechClient({
-      credentials: {
-        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-        client_email: process.env.GOOGLE_CLIENT_EMAIL,
-      },
+      apiKey: process.env.GOOGLE_API_KEY || "",
     });
 
     try {
