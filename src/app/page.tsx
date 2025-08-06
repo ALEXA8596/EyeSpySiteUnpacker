@@ -21,13 +21,7 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
   const [autoMergeAttempted, setAutoMergeAttempted] = useState(false);
   const ffmpegRef = useRef(new FFmpeg());
-
-  // Load bootstrap js
-
-  useEffect(() => {
-    import("bootstrap/dist/js/bootstrap.bundle.min.js" as any);
-  }, []);
-
+  
   // Load FFmpeg when component mounts
   useEffect(() => {
     const loadFFmpeg = async () => {
@@ -231,9 +225,9 @@ export default function Home() {
   const [podcastScript, setPodcastScript] = useState<string>("");
 
   // load bootstrap - CSS only (JS disabled to prevent Next.js conflicts)
-  // useEffect(() => {
-  //   import("bootstrap/dist/js/bootstrap.bundle.min.js" as any);
-  // }, []);
+  useEffect(() => {
+    import("bootstrap/dist/js/bootstrap.bundle.min.js" as any);
+  }, []);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();

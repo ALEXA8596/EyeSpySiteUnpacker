@@ -12,7 +12,7 @@ async function getPriorityLinks(
     }
     console.log("Using Google GenAI to prioritize links...");
     const client = new GoogleGenAI({
-      apiKey: process.env.GOOGLE_API_KEY || "",
+      apiKey: process.env.GEMINI_API_KEY || "",
     });
 
     const response = await client.models.generateContent({

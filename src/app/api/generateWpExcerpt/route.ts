@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   const { pageBodies, organizationName, websiteURL } = await request.json();
 
   const client = new GoogleGenAI({
-    apiKey: process.env.GOOGLE_API_KEY || "",
+    apiKey: process.env.GEMINI_API_KEY || "",
   });
 
   type PageBody = {

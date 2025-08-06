@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     `\n\nThe script will be read by 2 alternating speakers. Structure the script so that each paragraph represents a block of text to be read by one speaker before switching to the other. Ensure paragraphs are separated by a double newline (\\n\\n). Do not label the speakers (e.g., "Host 1:", "Speaker 2:").`;
 
   const client = new GoogleGenAI({
-    apiKey: process.env.GOOGLE_API_KEY || "",
+    apiKey: process.env.GEMINI_API_KEY || "",
   });
 
   type PageBody = {

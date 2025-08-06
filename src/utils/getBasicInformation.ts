@@ -22,7 +22,7 @@ async function getBasicInformation(
     }
     console.log("Using Google GenAI to extract basic information...");
     const client = new GoogleGenAI({
-      apiKey: process.env.GOOGLE_API_KEY || "",
+      apiKey: process.env.GEMINI_API_KEY || "",
     });
 
     const response = await client.models.generateContent({
