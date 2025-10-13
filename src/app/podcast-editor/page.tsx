@@ -550,8 +550,7 @@ export default function PodcastEditor() {
       >
         <h1 className="text-center">Podcast Editor</h1>
         <p className="text-center small text-muted">
-          Create alternating speaker segments, send to backend to generate
-          audio, and merge locally.
+          Edit your podcast script online, and generate it as spoken audio.
         </p>
 
         <form onSubmit={handleSubmit}>
@@ -677,7 +676,7 @@ export default function PodcastEditor() {
           </div>
 
           {/* Prompt Templates Accordion */}
-          <div className="mt-3">
+          <div className="my-3">
             <div className="accordion" id="promptTemplatesAccordion">
               <div className="accordion-item">
                 <h2 className="accordion-header" id="headingNewPrompt">
@@ -733,6 +732,27 @@ export default function PodcastEditor() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="d-flex gap-2 my-3 justify-content-center flex-wrap">
+            <button
+              type="submit"
+              className="btn btn-success"
+              disabled={generating}
+            >
+              {generating ? (
+                <>
+                  <span
+                    className="spinner-border spinner-border-sm me-2"
+                    role="status"
+                    aria-hidden="true"
+                  ></span>
+                  Generating...
+                </>
+              ) : (
+                "Generate Podcast Audio"
+              )}
+            </button>
           </div>
 
           <div className="mb-3">

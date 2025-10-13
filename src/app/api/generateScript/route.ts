@@ -13,7 +13,14 @@ export async function POST(request: NextRequest) {
     phoneNumber,
     promptType, // 0 - old, 1 - new
   } = await request.json();
-  console.log(JSON.stringify(request.json()));
+  console.log(JSON.stringify({
+    organizationName,
+    websiteURL,
+    email,
+    address,
+    phoneNumber,
+    promptType
+  }));
   let basePrompt;
 
   if (!promptType || promptType == 1) {

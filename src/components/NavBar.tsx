@@ -5,7 +5,7 @@ import Link from 'next/link';
 
 export default function NavBar() {
   return (
-    <nav className="navbar navbar-expand-lg navbar-light bg-white shadow-sm mb-4">
+    <nav className="navbar navbar-expand-lg navbar-light" style={{ backgroundColor: 'lightblue' }}> 
       <div className="container">
         <Link href="/" className="navbar-brand">
           EyeSpy Unpacker

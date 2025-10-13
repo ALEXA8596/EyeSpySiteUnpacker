@@ -275,6 +275,8 @@ export default function Home() {
   const [speaker1Voice, setSpeaker1Voice] = useState<string>('en-US-Chirp3-HD-Sulafat');
   const [speaker2Voice, setSpeaker2Voice] = useState<string>('en-US-Chirp3-HD-Algenib');
   const AVAILABLE_VOICES = ['en-US-Chirp3-HD-Sulafat', 'en-US-Chirp3-HD-Algenib'];
+  const [generateYoast, setGenerateYoast] = useState<boolean>(true);
+  const [generateWpExcerpt, setGenerateWpExcerpt] = useState<boolean>(true);
 
   // Ensure voices are distinct when switching to fixed mode or when one changes
   useEffect(() => {
@@ -440,30 +442,34 @@ export default function Home() {
       return;
     }
 
-    // Step 2: Generate AI Descriptions
+    // Step 2: Generate AI Descriptions (Yoast)
     try {
-      setLog((prev) => [...prev, "Generating AI description..."]);
-      if (!pageBodiesLiveCopy || pageBodiesLiveCopy.length === 0) {
-        setLog((prev) => [...prev, "⚠️ No page bodies available for AI description generation."]);
-        return;
+      if (generateYoast) {
+        setLog((prev) => [...prev, "Generating AI description..."]);
+        if (!pageBodiesLiveCopy || pageBodiesLiveCopy.length === 0) {
+          setLog((prev) => [...prev, "⚠️ No page bodies available for AI description generation."]);
+          return;
+        }
+
+        const aiResponse = await fetch("/api/generateDescriptions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
+        });
+
+        if (!aiResponse.ok) {
+          setLog((prev) => [...prev, `❌ Error generating AI description: ${aiResponse.status} - ${aiResponse.statusText}`]);
+          throw new Error("Network response was not ok");
+        }
+
+        const aiData = await aiResponse.json();
+        setYoastDescription(aiData.content || "");
+        setLog((prev) => [...prev, "✅ AI description generated."]);
+      } else {
+        setLog((prev) => [...prev, "⚪️ Skipped AI description (Yoast) generation by user request."]);
       }
-
-      const aiResponse = await fetch("/api/generateDescriptions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
-      });
-
-      if (!aiResponse.ok) {
-        setLog((prev) => [...prev, `❌ Error generating AI description: ${aiResponse.status} - ${aiResponse.statusText}`]);
-        throw new Error("Network response was not ok");
-      }
-
-      const aiData = await aiResponse.json();
-      setYoastDescription(aiData.content || "");
-      setLog((prev) => [...prev, "✅ AI description generated."]);
     } catch (error) {
       setLog((prev) => [...prev, `❌ Error during AI description generation: ${error}`]);
       console.error("Error during AI description generation:", error);
@@ -471,28 +477,32 @@ export default function Home() {
 
     // Step 3: Generate WP Excerpt
     try {
-      setLog((prev) => [...prev, "Generating WP excerpt..."]);
-      if(!pageBodiesLiveCopy || pageBodiesLiveCopy.length === 0) {
-        setLog((prev) => [...prev, "⚠️ No page bodies available for WP excerpt generation."]);
-        return;
+      if (generateWpExcerpt) {
+        setLog((prev) => [...prev, "Generating WP excerpt..."]);
+        if(!pageBodiesLiveCopy || pageBodiesLiveCopy.length === 0) {
+          setLog((prev) => [...prev, "⚠️ No page bodies available for WP excerpt generation."]);
+          return;
+        }
+
+        const aiResponse = await fetch("/api/generateWpExcerpt", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
+        });
+
+        if (!aiResponse.ok) {
+          setLog((prev) => [...prev, `❌ Error generating WP excerpt: ${aiResponse.status} - ${aiResponse.statusText}`]);
+          throw new Error("Network response was not ok");
+        }
+
+        const aiData = await aiResponse.json();
+        setWpExcerpt(aiData.content || "");
+        setLog((prev) => [...prev, "✅ WP excerpt generated."]);
+      } else {
+        setLog((prev) => [...prev, "⚪️ Skipped WP excerpt generation by user request."]);
       }
-
-      const aiResponse = await fetch("/api/generateWpExcerpt", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
-      });
-
-      if (!aiResponse.ok) {
-        setLog((prev) => [...prev, `❌ Error generating WP excerpt: ${aiResponse.status} - ${aiResponse.statusText}`]);
-        throw new Error("Network response was not ok");
-      }
-
-      const aiData = await aiResponse.json();
-      setWpExcerpt(aiData.content || "");
-      setLog((prev) => [...prev, "✅ WP excerpt generated."]);
     } catch (error) {
       setLog((prev) => [...prev, `❌ Error during WP excerpt generation: ${error}`]);
       console.error("Error during WP excerpt generation:", error);
@@ -670,6 +680,33 @@ export default function Home() {
                       )}
                     </div>
                   </div>
+                  {/* Generation Toggles */}
+                  <div className="form-group mt-3 text-center">
+                    <label className="form-label">Generate</label>
+                    <div>
+                      <div className="form-check form-check-inline">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="genYoast"
+                          checked={generateYoast}
+                          onChange={() => setGenerateYoast((v) => !v)}
+                        />
+                        <label className="form-check-label" htmlFor="genYoast">Yoast Description</label>
+                      </div>
+                      <div className="form-check form-check-inline">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="genWpExcerpt"
+                          checked={generateWpExcerpt}
+                          onChange={() => setGenerateWpExcerpt((v) => !v)}
+                        />
+                        <label className="form-check-label" htmlFor="genWpExcerpt">WP Excerpt</label>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Prompt Templates Accordion */}
                   <div className="mt-3">
                     <div className="accordion" id="promptTemplatesAccordion">
@@ -737,64 +774,68 @@ export default function Home() {
         }}
       >
         <h3>Generated Content</h3>
-        {/* Yoast Description (collapsible) */}
-        <div className="mb-3">
-          <div className="accordion" id="yoastAccordion">
-            <div className="accordion-item">
-              <h2 className="accordion-header" id="headingYoast">
-                <button
-                  className="accordion-button collapsed"
-                  type="button"
-                  data-bs-toggle="collapse"
-                  data-bs-target="#collapseYoast"
-                  aria-expanded="false"
-                  aria-controls="collapseYoast"
+        {/* Yoast Description (collapsible) - only show when generated */}
+        {yoastDescription && (
+          <div className="mb-3">
+            <div className="accordion" id="yoastAccordion">
+              <div className="accordion-item">
+                <h2 className="accordion-header" id="headingYoast">
+                  <button
+                    className="accordion-button collapsed"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#collapseYoast"
+                    aria-expanded="false"
+                    aria-controls="collapseYoast"
+                  >
+                    Yoast Description
+                  </button>
+                </h2>
+                <div
+                  id="collapseYoast"
+                  className="accordion-collapse collapse"
+                  aria-labelledby="headingYoast"
+                  data-bs-parent="#yoastAccordion"
                 >
-                  Yoast Description
-                </button>
-              </h2>
-              <div
-                id="collapseYoast"
-                className="accordion-collapse collapse"
-                aria-labelledby="headingYoast"
-                data-bs-parent="#yoastAccordion"
-              >
-                <div className="accordion-body">
-                  <p>{yoastDescription || "No description available."}</p>
+                  <div className="accordion-body">
+                    <p>{yoastDescription}</p>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-        {/* WP Excerpt (collapsible) */}
-        <div className="mb-3">
-          <div className="accordion" id="wpExcerptAccordion">
-            <div className="accordion-item">
-              <h2 className="accordion-header" id="headingWpExcerpt">
-                <button
-                  className="accordion-button collapsed"
-                  type="button"
-                  data-bs-toggle="collapse"
-                  data-bs-target="#collapseWpExcerpt"
-                  aria-expanded="false"
-                  aria-controls="collapseWpExcerpt"
+        )}
+        {/* WP Excerpt (collapsible) - only show when generated */}
+        {wpExcerpt && (
+          <div className="mb-3">
+            <div className="accordion" id="wpExcerptAccordion">
+              <div className="accordion-item">
+                <h2 className="accordion-header" id="headingWpExcerpt">
+                  <button
+                    className="accordion-button collapsed"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#collapseWpExcerpt"
+                    aria-expanded="false"
+                    aria-controls="collapseWpExcerpt"
+                  >
+                    WP Excerpt
+                  </button>
+                </h2>
+                <div
+                  id="collapseWpExcerpt"
+                  className="accordion-collapse collapse"
+                  aria-labelledby="headingWpExcerpt"
+                  data-bs-parent="#wpExcerptAccordion"
                 >
-                  WP Excerpt
-                </button>
-              </h2>
-              <div
-                id="collapseWpExcerpt"
-                className="accordion-collapse collapse"
-                aria-labelledby="headingWpExcerpt"
-                data-bs-parent="#wpExcerptAccordion"
-              >
-                <div className="accordion-body">
-                  <p>{wpExcerpt || "No excerpt available."}</p>
+                  <div className="accordion-body">
+                    <p>{wpExcerpt}</p>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
         
         {/* Podcast Script (collapsible, styled like podcast-editor) */}
         <div className="mb-3">
@@ -1142,14 +1183,18 @@ export default function Home() {
                     <td>{value || 'N/A'}</td>
                   </tr>
                 ))}
-                <tr>
-                  <td><strong>Yoast Description</strong></td>
-                  <td style={{ maxWidth: '600px', wordWrap: 'break-word' }}>{yoastDescription || 'N/A'}</td>
-                </tr>
-                <tr>
-                  <td><strong>WP Excerpt</strong></td>
-                  <td style={{ maxWidth: '600px', wordWrap: 'break-word' }}>{wpExcerpt || 'N/A'}</td>
-                </tr>
+                {yoastDescription && (
+                  <tr>
+                    <td><strong>Yoast Description</strong></td>
+                    <td style={{ maxWidth: '600px', wordWrap: 'break-word' }}>{yoastDescription}</td>
+                  </tr>
+                )}
+                {wpExcerpt && (
+                  <tr>
+                    <td><strong>WP Excerpt</strong></td>
+                    <td style={{ maxWidth: '600px', wordWrap: 'break-word' }}>{wpExcerpt}</td>
+                  </tr>
+                )}
                 <tr>
                   <td><strong>Audio Files Count</strong></td>
                   <td>{podcastFiles.length}</td>
@@ -1181,8 +1226,8 @@ export default function Home() {
                     {Object.keys(basicInformation).map(key => (
                       <th key={key}>{key}</th>
                     ))}
-                    <th>Yoast Description</th>
-                    <th>WP Excerpt</th>
+                    {yoastDescription && <th>Yoast Description</th>}
+                    {wpExcerpt && <th>WP Excerpt</th>}
                     <th>Audio Files</th>
                     <th>Pages Scraped</th>
                     <th>Podcast Script (First 200 chars)</th>
@@ -1194,12 +1239,16 @@ export default function Home() {
                     {Object.values(basicInformation).map((value, index) => (
                       <td key={index}>{value || 'N/A'}</td>
                     ))}
-                    <td style={{ maxWidth: '300px', wordWrap: 'break-word' }}>
-                      {yoastDescription || 'N/A'}
-                    </td>
-                    <td style={{ maxWidth: '300px', wordWrap: 'break-word' }}>
-                      {wpExcerpt || 'N/A'}
-                    </td>
+                    {yoastDescription && (
+                      <td style={{ maxWidth: '300px', wordWrap: 'break-word' }}>
+                        {yoastDescription}
+                      </td>
+                    )}
+                    {wpExcerpt && (
+                      <td style={{ maxWidth: '300px', wordWrap: 'break-word' }}>
+                        {wpExcerpt}
+                      </td>
+                    )}
                     <td className="text-center">{podcastFiles.length}</td>
                     <td className="text-center">{pageBodies.length}</td>
                     <td style={{ maxWidth: '400px', wordWrap: 'break-word', fontSize: '0.8em' }}>
