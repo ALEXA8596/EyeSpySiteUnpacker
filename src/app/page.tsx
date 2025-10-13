@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
+import NavBar from '@/components/NavBar';
+import { LOCALSTORAGE_SEGMENTS_KEY, ExportSegment, saveSegmentsToLocalStorage, loadSegmentsFromLocalStorage, downloadJSON } from '@/utils/scriptTransfer';
 // import "bootstrap/dist/js/bootstrap.bundle.min.js";
 
 type AudioFiles = {
@@ -19,7 +21,6 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
   const [isMerging, setIsMerging] = useState(false);
   const [mergedAudioUrl, setMergedAudioUrl] = useState<string | null>(null);
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
-  const [autoMergeAttempted, setAutoMergeAttempted] = useState(false);
   const ffmpegRef = useRef(new FFmpeg());
   
   // Load FFmpeg when component mounts
@@ -41,13 +42,22 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
     loadFFmpeg();
   }, []);
 
-  // Auto-merge when FFmpeg is loaded and audio files are available
+  // Auto-merge whenever FFmpeg is ready and audioFiles changes
   useEffect(() => {
-    if (ffmpegLoaded && audioFiles.length > 0 && !autoMergeAttempted && !mergedAudioUrl) {
-      setAutoMergeAttempted(true);
+    if (ffmpegLoaded && audioFiles.length > 0) {
       mergeAudioFiles();
     }
-  }, [ffmpegLoaded, audioFiles.length, autoMergeAttempted, mergedAudioUrl]);
+    // If there are no audio files, clear any previously merged URL
+    if (audioFiles.length === 0 && mergedAudioUrl) {
+      try {
+        URL.revokeObjectURL(mergedAudioUrl);
+      } catch (e) {
+        // ignore
+      }
+      setMergedAudioUrl(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ffmpegLoaded, audioFiles]);
 
   const mergeAudioFiles = async () => {
     if (!ffmpegLoaded || audioFiles.length === 0) return;
@@ -63,6 +73,15 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
           const fileName = `input${i}.mp3`;
           const audioData = audioFiles[i].audioData;
           const audioBuffer = Uint8Array.from(atob(audioData), c => c.charCodeAt(0));
+          // Remove any pre-existing file in FFmpeg FS to avoid EEXIST/FS errors
+          try {
+            // Access low-level FS if available
+            if ((ffmpeg as any).FS) {
+              try { (ffmpeg as any).FS("unlink", fileName); } catch (e) { /* ignore if not present */ }
+            }
+          } catch (e) {
+            // ignore
+          }
           await ffmpeg.writeFile(fileName, audioBuffer);
           inputFiles.push(fileName);
         } catch (e) {
@@ -76,7 +95,17 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
 
       // Create concat file list
       const concatList = inputFiles.map(file => `file '${file}'`).join('\n');
-      await ffmpeg.writeFile('filelist.txt', concatList);
+      // Write concat list as binary to avoid FS text issues
+      const encoder = new TextEncoder();
+      const concatBytes = encoder.encode(concatList);
+      try {
+        if ((ffmpeg as any).FS) {
+          try { (ffmpeg as any).FS("unlink", 'filelist.txt'); } catch (e) { /* ignore */ }
+        }
+      } catch (e) {
+        // ignore
+      }
+      await ffmpeg.writeFile('filelist.txt', concatBytes);
 
       // Run FFmpeg concat command
       await ffmpeg.exec([
@@ -91,8 +120,25 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
       const data = await ffmpeg.readFile('output.mp3');
       const uint8Array = new Uint8Array(data as unknown as ArrayBuffer);
       const blob = new Blob([uint8Array], { type: 'audio/mp3' });
+      // Revoke previous merged URL if present
+      if (mergedAudioUrl) {
+        try { URL.revokeObjectURL(mergedAudioUrl); } catch (e) { /* ignore */ }
+      }
       const url = URL.createObjectURL(blob);
       setMergedAudioUrl(url);
+
+      // Clean up FFmpeg FS temporary files
+      try {
+        if ((ffmpeg as any).FS) {
+          try { (ffmpeg as any).FS("unlink", 'output.mp3'); } catch (e) { /* ignore */ }
+          try { (ffmpeg as any).FS("unlink", 'filelist.txt'); } catch (e) { /* ignore */ }
+          for (const f of inputFiles) {
+            try { (ffmpeg as any).FS("unlink", f); } catch (e) { /* ignore */ }
+          }
+        }
+      } catch (e) {
+        // ignore cleanup errors
+      }
 
     } catch (error) {
       console.error('Error merging audio files:', error);
@@ -223,16 +269,137 @@ export default function Home() {
   const [podcastFiles, setPodcastFiles] = useState<AudioFiles[]>([]);
 
   const [podcastScript, setPodcastScript] = useState<string>("");
+  
+  const [promptVersion, setPromptVersion] = useState<number>(1); // 0 = legacy, 1 = new
+  const [voiceMode, setVoiceMode] = useState<number>(0); // 0 = randomize, 1 = fixed
+  const [speaker1Voice, setSpeaker1Voice] = useState<string>('en-US-Chirp3-HD-Sulafat');
+  const [speaker2Voice, setSpeaker2Voice] = useState<string>('en-US-Chirp3-HD-Algenib');
+  const AVAILABLE_VOICES = ['en-US-Chirp3-HD-Sulafat', 'en-US-Chirp3-HD-Algenib'];
+  const [generateYoast, setGenerateYoast] = useState<boolean>(true);
+  const [generateWpExcerpt, setGenerateWpExcerpt] = useState<boolean>(true);
 
-  // load bootstrap - CSS only (JS disabled to prevent Next.js conflicts)
+  // Ensure voices are distinct when switching to fixed mode or when one changes
+  useEffect(() => {
+    if (voiceMode === 1) {
+      if (speaker1Voice === speaker2Voice) {
+        const other = AVAILABLE_VOICES.find(v => v !== speaker1Voice) || AVAILABLE_VOICES[0];
+        setSpeaker2Voice(other);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode]);
+
+  // Prompt templates (display-only)
+  const newPromptTemplate = `Generate a podcast-style audio overview script based on the provided content for "{organizationName}". The output should be a conversational script between two AI hosts discussing the main points, insights, and implications of the input material. Do not include a separate title line; begin directly with the script content. Do not give the podcast a name. Just start talking about the subject.\n\nContext and contact details (use where helpful, but do not read lists verbatim):\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\n\nINSERTBODIESHERE\n\nPodcast Format:... (truncated for UI)`;
+
+  const legacyPromptTemplate = `You are an expert script writer. Create a script for an audio overview of the organization "{organizationName}". The script should be informative and conversational. Do not introduce the script with a title. The audience is primarily low vision or blind people. Appropriately use the following details:\n\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\nINSERTBODIESHERE\n\nIf applicable, give a list and description of the services and the events that the organization offers. Do not sound like an advertisement... (truncated for UI)`;
+  
+  type Segment = { id: string; speaker: 'Speaker 1' | 'Speaker 2'; text: string };
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [showScriptEditor, setShowScriptEditor] = useState(false);
+  const [generating, setGenerating] = useState(false);
+
   useEffect(() => {
     import("bootstrap/dist/js/bootstrap.bundle.min.js" as any);
   }, []);
+
+  // Script editing functions
+  const addSegment = () => {
+    const last = segments[segments.length - 1];
+    const nextSpeaker = last && last.speaker === 'Speaker 1' ? 'Speaker 2' : 'Speaker 1';
+    const newSeg: Segment = { id: String(Date.now()) + Math.random(), speaker: nextSpeaker, text: '' };
+    setSegments(prev => [...prev, newSeg]);
+  };
+
+  // Ensure the first segment is Speaker 1 and alternate speakers so there are no back-to-back same speakers
+  const distributeLines = () => {
+    setSegments(prev => {
+      const distributed = prev.map((s, i): Segment => ({ ...s, speaker: i % 2 === 0 ? 'Speaker 1' : 'Speaker 2' }));
+      // Update displayed script as well
+      const newScript = distributed.map(s => s.text).filter(t => t.trim()).join('\n\n');
+      setPodcastScript(newScript);
+      return distributed;
+    });
+    setLog(prev => [...prev, '✅ Distributed lines: alternating speakers starting with Speaker 1']);
+  };
+
+  const removeSegment = (id: string) => {
+    setSegments(prev => {
+      const updated = prev.filter(s => s.id !== id);
+      // Update the display script whenever segments change
+      const newScript = updated.map(s => s.text).filter(t => t.trim()).join('\n\n');
+      setPodcastScript(newScript);
+      return updated;
+    });
+  };
+
+  const updateSegmentText = (id: string, text: string) => {
+    setSegments(prev => {
+      const updated = prev.map(s => s.id === id ? { ...s, text } : s);
+      // Update the display script whenever segments change
+      const newScript = updated.map(s => s.text).filter(t => t.trim()).join('\n\n');
+      setPodcastScript(newScript);
+      return updated;
+    });
+  };
+
+  const toggleSpeaker = (id: string) => {
+    setSegments(prev => prev.map(s => s.id === id ? { ...s, speaker: s.speaker === 'Speaker 1' ? 'Speaker 2' : 'Speaker 1' } : s));
+  };
+
+  const generateAudioFromScript = async () => {
+    // Validation: remove empty segments and enforce reasonable length
+    const cleaned = segments
+      .map(s => ({ ...s, text: (s.text || '').replace(/\r/g, '') }))
+      .filter(s => s.text.trim().length > 0);
+
+    if (cleaned.length === 0) {
+      setLog(prev => [...prev, '⚠️ Validation failed: please add at least one non-empty segment before generating audio.']);
+      return;
+    }
+
+    // Max length guard (per segment)
+    const tooLong = cleaned.find(s => s.text.length > 10000);
+    if (tooLong) {
+      setLog(prev => [...prev, `⚠️ One of the segments is too long (>10,000 chars). Please shorten it.`]);
+      return;
+    }
+
+    setLog(prev => [...prev, 'Generating audio from edited script...']);
+    setGenerating(true);
+
+    try {
+      const response = await fetch('/api/scriptToAudio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segments: cleaned, voiceMode, speaker1Voice, speaker2Voice }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        setLog(prev => [...prev, `❌ Backend error: ${response.status} ${response.statusText} ${text}`]);
+        return;
+      }
+
+      const data = await response.json();
+      setPodcastFiles(data.savedFiles || []);
+      setLog(prev => [...prev, `✅ Generated ${data.savedFiles?.length ?? 0} audio files from edited script.`]);
+    } catch (err) {
+      setLog(prev => [...prev, `❌ Error generating audio: ${String(err)}`]);
+      console.error(err);
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
     setLog(["Starting process for: " + websiteURL]); // Clear previous logs and start new log
+    setShowScriptEditor(false); // Reset script editor
+    setSegments([]); // Clear segments
+    setPodcastFiles([]); // Clear audio files
+    setPodcastScript(""); // Clear script
 
     let scrapedData;
     let pageBodiesLiveCopy;
@@ -275,30 +442,34 @@ export default function Home() {
       return;
     }
 
-    // Step 2: Generate AI Descriptions
+    // Step 2: Generate AI Descriptions (Yoast)
     try {
-      setLog((prev) => [...prev, "Generating AI description..."]);
-      if (!pageBodiesLiveCopy || pageBodiesLiveCopy.length === 0) {
-        setLog((prev) => [...prev, "⚠️ No page bodies available for AI description generation."]);
-        return;
+      if (generateYoast) {
+        setLog((prev) => [...prev, "Generating AI description..."]);
+        if (!pageBodiesLiveCopy || pageBodiesLiveCopy.length === 0) {
+          setLog((prev) => [...prev, "⚠️ No page bodies available for AI description generation."]);
+          return;
+        }
+
+        const aiResponse = await fetch("/api/generateDescriptions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
+        });
+
+        if (!aiResponse.ok) {
+          setLog((prev) => [...prev, `❌ Error generating AI description: ${aiResponse.status} - ${aiResponse.statusText}`]);
+          throw new Error("Network response was not ok");
+        }
+
+        const aiData = await aiResponse.json();
+        setYoastDescription(aiData.content || "");
+        setLog((prev) => [...prev, "✅ AI description generated."]);
+      } else {
+        setLog((prev) => [...prev, "⚪️ Skipped AI description (Yoast) generation by user request."]);
       }
-
-      const aiResponse = await fetch("/api/generateDescriptions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
-      });
-
-      if (!aiResponse.ok) {
-        setLog((prev) => [...prev, `❌ Error generating AI description: ${aiResponse.status} - ${aiResponse.statusText}`]);
-        throw new Error("Network response was not ok");
-      }
-
-      const aiData = await aiResponse.json();
-      setYoastDescription(aiData.content || "");
-      setLog((prev) => [...prev, "✅ AI description generated."]);
     } catch (error) {
       setLog((prev) => [...prev, `❌ Error during AI description generation: ${error}`]);
       console.error("Error during AI description generation:", error);
@@ -306,61 +477,96 @@ export default function Home() {
 
     // Step 3: Generate WP Excerpt
     try {
-      setLog((prev) => [...prev, "Generating WP excerpt..."]);
-      if(!pageBodiesLiveCopy || pageBodiesLiveCopy.length === 0) {
-        setLog((prev) => [...prev, "⚠️ No page bodies available for WP excerpt generation."]);
-        return;
+      if (generateWpExcerpt) {
+        setLog((prev) => [...prev, "Generating WP excerpt..."]);
+        if(!pageBodiesLiveCopy || pageBodiesLiveCopy.length === 0) {
+          setLog((prev) => [...prev, "⚠️ No page bodies available for WP excerpt generation."]);
+          return;
+        }
+
+        const aiResponse = await fetch("/api/generateWpExcerpt", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
+        });
+
+        if (!aiResponse.ok) {
+          setLog((prev) => [...prev, `❌ Error generating WP excerpt: ${aiResponse.status} - ${aiResponse.statusText}`]);
+          throw new Error("Network response was not ok");
+        }
+
+        const aiData = await aiResponse.json();
+        setWpExcerpt(aiData.content || "");
+        setLog((prev) => [...prev, "✅ WP excerpt generated."]);
+      } else {
+        setLog((prev) => [...prev, "⚪️ Skipped WP excerpt generation by user request."]);
       }
-
-      const aiResponse = await fetch("/api/generateWpExcerpt", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
-      });
-
-      if (!aiResponse.ok) {
-        setLog((prev) => [...prev, `❌ Error generating WP excerpt: ${aiResponse.status} - ${aiResponse.statusText}`]);
-        throw new Error("Network response was not ok");
-      }
-
-      const aiData = await aiResponse.json();
-      setWpExcerpt(aiData.content || "");
-      setLog((prev) => [...prev, "✅ WP excerpt generated."]);
     } catch (error) {
       setLog((prev) => [...prev, `❌ Error during WP excerpt generation: ${error}`]);
       console.error("Error during WP excerpt generation:", error);
     }
 
-    // Step 4: Generate Podcast Files
+    // Step 4: Generate Podcast Script
     try {
-      setLog((prev) => [...prev, "Generating individual podcast files..."]);
-      const podcastResponse = await fetch("/api/generatePodcasts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
+      setLog((prev) => [...prev, "Generating podcast script..."]);
+
+      // 1) Generate the script (structure + paragraphs)
+      const scriptResp = await fetch('/api/generateScript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || 'Organization Name Not Provided', promptType: promptVersion, voiceMode, speaker1Voice, speaker2Voice }),
       });
 
-      if (!podcastResponse.ok) {
-        setLog((prev) => [...prev, `❌ Error generating podcast files: ${podcastResponse.status} - ${podcastResponse.statusText}`]);
-        throw new Error("Network response was not ok");
+      if (!scriptResp.ok) {
+        setLog((prev) => [...prev, `❌ Error generating script: ${scriptResp.status} - ${scriptResp.statusText}`]);
+        throw new Error('Network response was not ok (generateScript)');
       }
 
-      const podcastData = await podcastResponse.json();
-      setPodcastFiles(podcastData.savedFiles || []);
-      setPodcastScript(podcastData.script || "");
-      setLog((prev) => [...prev, "✅ Podcast files generated."]);
+      const scriptData = await scriptResp.json();
+      const generatedScript: string = scriptData.script || scriptData.text || '';
+      setPodcastScript(generatedScript);
+      setLog((prev) => [...prev, '✅ Script generated. You can now edit it before generating audio.']);
+
+      // 2) Parse script into segments for editing
+      let segmentsForEditing: Segment[] = [];
+
+      if (Array.isArray(scriptData.scriptArray) && scriptData.scriptArray.length > 0) {
+        segmentsForEditing = scriptData.scriptArray
+          .map((p: any, idx: number) => {
+            const speakerRaw = (p.speaker || '').toString().toLowerCase();
+            const speaker = speakerRaw.includes('1') ? 'Speaker 1' : 'Speaker 2';
+            return { 
+              id: String(Date.now()) + '-' + idx, 
+              speaker: speaker as 'Speaker 1' | 'Speaker 2', 
+              text: (p.text || '').toString().replace(/\n/g, ' ').trim() 
+            };
+          })
+          .filter((s: any) => s.text && s.text.length > 0);
+      } else if (generatedScript) {
+        // Fallback: split by double newline and alternate speakers
+        const paragraphs = generatedScript.split('\n\n').map((p) => p.replace(/\n/g, ' ').trim()).filter((p) => p.length > 0);
+        segmentsForEditing = paragraphs.map((text, idx) => ({ 
+          id: String(Date.now()) + '-' + idx, 
+          speaker: idx % 2 === 0 ? 'Speaker 1' : 'Speaker 2' as 'Speaker 1' | 'Speaker 2', 
+          text 
+        }));
+      }
+
+      setSegments(segmentsForEditing);
+      setShowScriptEditor(true);
+      setLog((prev) => [...prev, `Script parsed into ${segmentsForEditing.length} editable segments.`]);
+
     } catch (error) {
-      setLog((prev) => [...prev, `❌ Error during podcast generation: ${error}`]);
-      console.error("Error during podcast generation:", error);
+      setLog((prev) => [...prev, `❌ Error during script generation: ${String(error)}`]);
+      console.error('Error during script generation:', error);
     }
   };
 
   return (
     <div className="min-vh-100 container py-5">
+      <NavBar />
       <div
         className="container shadow p-4 m-auto rounded-md"
         style={{
@@ -370,9 +576,6 @@ export default function Home() {
         }}
       >
         <h1 className="text-center">Eye Spy Org Unpacker</h1>
-        <div className="d-flex justify-content-center mb-3">
-          <a href="/batch" className="btn btn-outline-secondary">📋 Batch Process Multiple Sites</a>
-        </div>
         <div className="row">
           <div className="col-md-6">
             <div className="p-3 bg-white rounded-lg shadow-sm">
@@ -391,6 +594,149 @@ export default function Home() {
                     value={websiteURL}
                     onChange={(e) => setWebsiteURL(e.target.value)}
                   />
+                </div>
+
+                <div className="form-group mb-3">
+                  <label htmlFor="promptVersion" className="form-label">
+                    Prompt Version
+                  </label>
+                  <div>
+                    <div className="form-check form-check-inline">
+                      <input
+                        className="form-check-input"
+                        type="radio"
+                        name="promptVersion"
+                        id="promptNew"
+                        checked={promptVersion === 1}
+                        onChange={() => setPromptVersion(1)}
+                      />
+                      <label className="form-check-label" htmlFor="promptNew">
+                        New Prompt
+                      </label>
+                    </div>
+
+                    <div className="form-check form-check-inline">
+                      <input
+                        className="form-check-input"
+                        type="radio"
+                        name="promptVersion"
+                        id="promptOld"
+                        checked={promptVersion === 0}
+                        onChange={() => setPromptVersion(0)}
+                      />
+                      <label className="form-check-label" htmlFor="promptOld">
+                        Legacy Prompt
+                      </label>
+                    </div>
+
+                    <div className="form-text small text-muted mt-1">
+                      Choose which prompt template to use when generating the podcast script.
+                    </div>
+                  </div>
+                  <div className="form-group mt-3">
+                    <label className="form-label">Voice Assignment</label>
+                    <div>
+                      <div className="form-check form-check-inline">
+                        <input className="form-check-input" type="radio" name="voiceMode" id="voiceRandom" checked={voiceMode === 0} onChange={() => setVoiceMode(0)} />
+                        <label className="form-check-label" htmlFor="voiceRandom">Randomize Voices</label>
+                      </div>
+                      <div className="form-check form-check-inline">
+                        <input className="form-check-input" type="radio" name="voiceMode" id="voiceFixed" checked={voiceMode === 1} onChange={() => setVoiceMode(1)} />
+                        <label className="form-check-label" htmlFor="voiceFixed">Fixed Voices</label>
+                      </div>
+
+                      {voiceMode === 1 && (
+                        <div className="d-flex gap-2 mt-2 align-items-center flex-wrap">
+                          <div className="form-group">
+                            <label className="form-label small mb-1">Speaker 1 Voice</label>
+                            <select className="form-select form-select-sm" value={speaker1Voice} onChange={(e) => {
+                                const v = e.target.value;
+                                setSpeaker1Voice(v);
+                                // if equal, pick opposite
+                                if (v === speaker2Voice) {
+                                  const other = AVAILABLE_VOICES.find(x => x !== v) || AVAILABLE_VOICES[0];
+                                  setSpeaker2Voice(other);
+                                }
+                              }}>
+                                <option value="en-US-Chirp3-HD-Sulafat">en-US-Chirp3-HD-Sulafat</option>
+                                <option value="en-US-Chirp3-HD-Algenib">en-US-Chirp3-HD-Algenib</option>
+                              </select>
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label small mb-1">Speaker 2 Voice</label>
+                            <select className="form-select form-select-sm" value={speaker2Voice} onChange={(e) => {
+                                const v = e.target.value;
+                                setSpeaker2Voice(v);
+                                if (v === speaker1Voice) {
+                                  const other = AVAILABLE_VOICES.find(x => x !== v) || AVAILABLE_VOICES[0];
+                                  setSpeaker1Voice(other);
+                                }
+                              }}>
+                              <option value="en-US-Chirp3-HD-Sulafat">en-US-Chirp3-HD-Sulafat</option>
+                              <option value="en-US-Chirp3-HD-Algenib">en-US-Chirp3-HD-Algenib</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* Generation Toggles */}
+                  <div className="form-group mt-3 text-center">
+                    <label className="form-label">Generate</label>
+                    <div>
+                      <div className="form-check form-check-inline">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="genYoast"
+                          checked={generateYoast}
+                          onChange={() => setGenerateYoast((v) => !v)}
+                        />
+                        <label className="form-check-label" htmlFor="genYoast">Yoast Description</label>
+                      </div>
+                      <div className="form-check form-check-inline">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="genWpExcerpt"
+                          checked={generateWpExcerpt}
+                          onChange={() => setGenerateWpExcerpt((v) => !v)}
+                        />
+                        <label className="form-check-label" htmlFor="genWpExcerpt">WP Excerpt</label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Prompt Templates Accordion */}
+                  <div className="mt-3">
+                    <div className="accordion" id="promptTemplatesAccordion">
+                      <div className="accordion-item">
+                        <h2 className="accordion-header" id="headingNewPrompt">
+                          <button className="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseNewPrompt" aria-expanded="false" aria-controls="collapseNewPrompt">
+                            New Prompt Template
+                          </button>
+                        </h2>
+                        <div id="collapseNewPrompt" className="accordion-collapse collapse" aria-labelledby="headingNewPrompt" data-bs-parent="#promptTemplatesAccordion">
+                          <div className="accordion-body">
+                            <pre style={{ whiteSpace: 'pre-wrap' }}>{newPromptTemplate}</pre>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="accordion-item">
+                        <h2 className="accordion-header" id="headingLegacyPrompt">
+                          <button className="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLegacyPrompt" aria-expanded="false" aria-controls="collapseLegacyPrompt">
+                            Legacy Prompt Template
+                          </button>
+                        </h2>
+                        <div id="collapseLegacyPrompt" className="accordion-collapse collapse" aria-labelledby="headingLegacyPrompt" data-bs-parent="#promptTemplatesAccordion">
+                          <div className="accordion-body">
+                            <pre style={{ whiteSpace: 'pre-wrap' }}>{legacyPromptTemplate}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <button type="submit" className="btn btn-success">
@@ -419,7 +765,7 @@ export default function Home() {
         </div>
       </div>
 
-            <div
+      <div
         className="container shadow p-4 my-2 m-auto rounded-md"
         style={{
           backgroundColor: "#e6f7ff",
@@ -428,22 +774,260 @@ export default function Home() {
         }}
       >
         <h3>Generated Content</h3>
-        {/* Yoast Description */}
-        <div className="mb-3">
-          <h4>Yoast Description</h4>
-          <p>{yoastDescription || "No description available."}</p>
-        </div>
-        {/* WP Excerpt */}
-        <div className="mb-3">
-          <h4>WP Excerpt</h4>
-          <p>{wpExcerpt || "No excerpt available."}</p>
-        </div>
+        {/* Yoast Description (collapsible) - only show when generated */}
+        {yoastDescription && (
+          <div className="mb-3">
+            <div className="accordion" id="yoastAccordion">
+              <div className="accordion-item">
+                <h2 className="accordion-header" id="headingYoast">
+                  <button
+                    className="accordion-button collapsed"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#collapseYoast"
+                    aria-expanded="false"
+                    aria-controls="collapseYoast"
+                  >
+                    Yoast Description
+                  </button>
+                </h2>
+                <div
+                  id="collapseYoast"
+                  className="accordion-collapse collapse"
+                  aria-labelledby="headingYoast"
+                  data-bs-parent="#yoastAccordion"
+                >
+                  <div className="accordion-body">
+                    <p>{yoastDescription}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* WP Excerpt (collapsible) - only show when generated */}
+        {wpExcerpt && (
+          <div className="mb-3">
+            <div className="accordion" id="wpExcerptAccordion">
+              <div className="accordion-item">
+                <h2 className="accordion-header" id="headingWpExcerpt">
+                  <button
+                    className="accordion-button collapsed"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#collapseWpExcerpt"
+                    aria-expanded="false"
+                    aria-controls="collapseWpExcerpt"
+                  >
+                    WP Excerpt
+                  </button>
+                </h2>
+                <div
+                  id="collapseWpExcerpt"
+                  className="accordion-collapse collapse"
+                  aria-labelledby="headingWpExcerpt"
+                  data-bs-parent="#wpExcerptAccordion"
+                >
+                  <div className="accordion-body">
+                    <p>{wpExcerpt}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         
-        {/* Podcast Script */}
+        {/* Podcast Script (collapsible, styled like podcast-editor) */}
         <div className="mb-3">
-          <h4>Podcast Script</h4>
-          <pre className="text-wrap">{podcastScript || "No script available."}</pre>
+          <div className="accordion" id="podcastScriptAccordion">
+            <div className="accordion-item">
+              <h2 className="accordion-header" id="headingPodcastScript">
+                <button
+                  className="accordion-button collapsed"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapsePodcastScript"
+                  aria-expanded="false"
+                  aria-controls="collapsePodcastScript"
+                >
+                  Podcast Script
+                </button>
+              </h2>
+              <div
+                id="collapsePodcastScript"
+                className="accordion-collapse collapse"
+                aria-labelledby="headingPodcastScript"
+                data-bs-parent="#podcastScriptAccordion"
+              >
+                <div className="accordion-body p-0">
+                  <div className="card">
+                    <div className="card-body">
+                      <div className="p-3 bg-light rounded" style={{ minHeight: 120 }}>
+                        <div className="mb-0" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {podcastScript || 'No script available.'}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 d-flex gap-2 align-items-center flex-wrap">
+                        <button
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => {
+                            try {
+                              const key = 'podcastScript';
+                              localStorage.setItem(key, podcastScript || '');
+                              const blob = new Blob([podcastScript || ''], { type: 'text/plain' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = 'podcast-script.txt';
+                              document.body.appendChild(a);
+                              a.click();
+                              a.remove();
+                              URL.revokeObjectURL(url);
+                              setLog((prev) => [...prev, '✅ Script exported to localStorage and downloaded.']);
+                            } catch (e) {
+                              setLog((prev) => [...prev, '❌ Failed to export script.']);
+                            }
+                          }}
+                          disabled={!podcastScript}
+                        >
+                          Export Script
+                        </button>
+
+                        <button
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={async () => {
+                            if (!podcastScript) return;
+                            try {
+                              await navigator.clipboard.writeText(podcastScript || '');
+                              setLog((prev) => [...prev, '✅ Script copied to clipboard.']);
+                            } catch (e) {
+                              setLog((prev) => [...prev, '❌ Failed to copy script to clipboard.']);
+                            }
+                          }}
+                          disabled={!podcastScript}
+                        >
+                          Copy Script
+                        </button>
+
+                        <button
+                          className="btn btn-sm btn-outline-info"
+                          onClick={() => {
+                            if (!podcastScript) {
+                              setLog((prev) => [...prev, '⚠️ No script available to export as segments.']);
+                              return;
+                            }
+                            try {
+                              const paragraphs = podcastScript.split('\n\n').map(p => p.replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+                              const exportData: ExportSegment[] = paragraphs.map((text, idx) => ({ speakerIndex: idx % 2 === 0 ? 0 : 1, text }));
+                              saveSegmentsToLocalStorage(LOCALSTORAGE_SEGMENTS_KEY, exportData);
+                              downloadJSON(exportData, 'podcast-segments.json');
+                              setLog((prev) => [...prev, `✅ Exported ${exportData.length} segments as JSON.`]);
+                            } catch (e) {
+                              setLog((prev) => [...prev, '❌ Failed to export segments as JSON.']);
+                            }
+                          }}
+                          disabled={!podcastScript}
+                        >
+                          Export Segments (JSON)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
+
+        {/* Script Editor */}
+        {showScriptEditor && (
+          <div className="mb-3">
+            <div className="d-flex justify-content-between align-items-center mb-3">
+              <h4>Edit Podcast Script</h4>
+              <button 
+                className="btn btn-sm btn-outline-secondary"
+                onClick={() => setShowScriptEditor(false)}
+              >
+                Hide Editor
+              </button>
+            </div>
+            <p className="text-muted">Edit the script segments below before generating audio. Each segment represents a block of dialog from one speaker.</p>
+            
+            <div className="row">
+              <div className="col-12">
+                <div className="mb-3 d-flex gap-2 align-items-center flex-wrap">
+                  <button 
+                    className="btn btn-success" 
+                    onClick={generateAudioFromScript} 
+                    disabled={generating || segments.length === 0}
+                  >
+                    {generating ? '🔄 Generating Audio...' : '🎤 Generate Audio from Script'}
+                  </button>
+                  <button 
+                    className="btn btn-outline-secondary" 
+                    onClick={addSegment}
+                  >
+                    ➕ Add Segment
+                  </button>
+                  <button
+                    className="btn btn-outline-info"
+                    onClick={distributeLines}
+                    disabled={segments.length === 0}
+                  >
+                    🔀 Distribute Lines
+                  </button>
+                  <span className="small text-muted">
+                    {segments.length} segment{segments.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                {segments.map((seg, idx) => {
+                  const isLeft = seg.speaker === 'Speaker 1';
+                  const cardStyle: React.CSSProperties = {
+                    width: '67%',
+                    maxWidth: '67%',
+                    marginBottom: '8px',
+                  };
+
+                  return (
+                    <div
+                      key={seg.id}
+                      className={`d-flex mb-0 ${isLeft ? 'justify-content-start' : 'justify-content-end'}`}
+                    >
+                      <div className="card" style={cardStyle}>
+                        <div className="card-body">
+                          <div className="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                              <strong>{seg.speaker} — Segment {idx + 1}</strong>
+                            </div>
+                            <div>
+                              <button type="button" className="btn btn-sm btn-outline-secondary me-1" onClick={() => toggleSpeaker(seg.id)}>Swap</button>
+                              <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => removeSegment(seg.id)}>Remove</button>
+                            </div>
+                          </div>
+                          <textarea className="form-control" rows={3} value={seg.text} onChange={(e) => updateSegmentText(seg.id, e.target.value)} placeholder="Enter transcript for this segment" />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Show Editor Button */}
+        {!showScriptEditor && podcastScript && (
+          <div className="mb-3">
+            <button 
+              className="btn btn-outline-primary"
+              onClick={() => setShowScriptEditor(true)}
+            >
+              ✏️ Edit Script Before Generating Audio
+            </button>
+          </div>
+        )}
         
         {/* Audio Files */}
         {podcastFiles.length > 0 && (
@@ -599,14 +1183,18 @@ export default function Home() {
                     <td>{value || 'N/A'}</td>
                   </tr>
                 ))}
-                <tr>
-                  <td><strong>Yoast Description</strong></td>
-                  <td style={{ maxWidth: '600px', wordWrap: 'break-word' }}>{yoastDescription || 'N/A'}</td>
-                </tr>
-                <tr>
-                  <td><strong>WP Excerpt</strong></td>
-                  <td style={{ maxWidth: '600px', wordWrap: 'break-word' }}>{wpExcerpt || 'N/A'}</td>
-                </tr>
+                {yoastDescription && (
+                  <tr>
+                    <td><strong>Yoast Description</strong></td>
+                    <td style={{ maxWidth: '600px', wordWrap: 'break-word' }}>{yoastDescription}</td>
+                  </tr>
+                )}
+                {wpExcerpt && (
+                  <tr>
+                    <td><strong>WP Excerpt</strong></td>
+                    <td style={{ maxWidth: '600px', wordWrap: 'break-word' }}>{wpExcerpt}</td>
+                  </tr>
+                )}
                 <tr>
                   <td><strong>Audio Files Count</strong></td>
                   <td>{podcastFiles.length}</td>
@@ -638,8 +1226,8 @@ export default function Home() {
                     {Object.keys(basicInformation).map(key => (
                       <th key={key}>{key}</th>
                     ))}
-                    <th>Yoast Description</th>
-                    <th>WP Excerpt</th>
+                    {yoastDescription && <th>Yoast Description</th>}
+                    {wpExcerpt && <th>WP Excerpt</th>}
                     <th>Audio Files</th>
                     <th>Pages Scraped</th>
                     <th>Podcast Script (First 200 chars)</th>
@@ -651,12 +1239,16 @@ export default function Home() {
                     {Object.values(basicInformation).map((value, index) => (
                       <td key={index}>{value || 'N/A'}</td>
                     ))}
-                    <td style={{ maxWidth: '300px', wordWrap: 'break-word' }}>
-                      {yoastDescription || 'N/A'}
-                    </td>
-                    <td style={{ maxWidth: '300px', wordWrap: 'break-word' }}>
-                      {wpExcerpt || 'N/A'}
-                    </td>
+                    {yoastDescription && (
+                      <td style={{ maxWidth: '300px', wordWrap: 'break-word' }}>
+                        {yoastDescription}
+                      </td>
+                    )}
+                    {wpExcerpt && (
+                      <td style={{ maxWidth: '300px', wordWrap: 'break-word' }}>
+                        {wpExcerpt}
+                      </td>
+                    )}
                     <td className="text-center">{podcastFiles.length}</td>
                     <td className="text-center">{pageBodies.length}</td>
                     <td style={{ maxWidth: '400px', wordWrap: 'break-word', fontSize: '0.8em' }}>

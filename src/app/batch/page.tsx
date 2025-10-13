@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
+import NavBar from '@/components/NavBar';
 import Link from "next/link";
 
 interface ProcessedWebsite {
@@ -436,6 +437,7 @@ export default function BatchProcessor() {
 
   return (
     <div className="min-vh-100 container py-5">
+      <NavBar />
       {/* Header */}
       <div className="container shadow p-4 m-auto rounded-md mb-4" style={{ backgroundColor: "#e6f7ff", borderRadius: "20px" }}>
         <div className="d-flex justify-content-between align-items-center mb-3">

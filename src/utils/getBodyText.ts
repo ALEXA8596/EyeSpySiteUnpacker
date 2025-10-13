@@ -12,10 +12,6 @@ async function getBodyText(url: string): Promise<string> {
     url = "https://" + url; // Ensure URL has a protocol
   }
 
-  if(url.includes("eyesonsite")) {
-    url = url.replace("https://", "http://");
-  }
-
   const httpsAgent = new https.Agent({
     rejectUnauthorized: false,
   });
