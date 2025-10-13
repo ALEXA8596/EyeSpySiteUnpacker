@@ -26,7 +26,7 @@ async function getBasicInformation(
     });
 
     const response = await client.models.generateContent({
-      model: "gemini-2.0-flash-lite",
+      model: "gemini-2.5-flash-lite",
       contents: [
         {
           //   role: "user",

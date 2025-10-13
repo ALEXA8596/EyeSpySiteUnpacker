@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
   type PageBody = {
     bodyText?: string;
     href?: string;
-  }
+  };
 
   let entirePrompt = basePrompt.replace(
     "INSERTBODIESHERE",
@@ -79,9 +79,7 @@ export async function POST(request: NextRequest) {
         }
         console.log(tokenResponse);
       } catch (error) {
-        console.warn(
-          `Error counting tokens: ${error}, reducing content`
-        );
+        console.warn(`Error counting tokens: ${error}, reducing content`);
         console.error(error);
         bodyTextsLength--;
       }
@@ -130,7 +128,7 @@ export async function POST(request: NextRequest) {
       model: "gemini-2.5-flash",
       contents: [
         {
-        //   role: "user",
+          //   role: "user",
           text: entirePrompt,
         },
       ],
@@ -146,11 +144,14 @@ export async function POST(request: NextRequest) {
 
     script = response.text;
 
-    // debugging
+    const scriptArray = script.split("\n\n").map((el, index) => {
+      return { speaker: index % 2 === 0 ? "speaker1" : "speaker2", text: el };
+    });
 
-    require("fs").writeFileSync("script.txt", script);
-
-    // return NextResponse.json({ script: response.text });
+    return NextResponse.json({
+      script: response.text,
+      scriptArray: scriptArray,
+    });
   } catch (error) {
     console.error(`Error generating script for ${organizationName}:`, error);
     return NextResponse.json(
@@ -158,77 +159,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-
-  // generate podcast using google tts
-
-  const paragraphs = script.split("\n\n").filter((p) => p.trim().length > 0);
-  const speaker1Parts = [];
-  const speaker2Parts = [];
-
-  paragraphs.forEach((paragraph, index) => {
-    const escapedParagraph = paragraph.replaceAll("\n", " ");
-    if (index % 2 === 0) {
-      speaker1Parts.push(escapedParagraph.replace(".", "...")); // Add a pause at the end of each paragraph
-    } else {
-      speaker2Parts.push(escapedParagraph.replace(".", "...")); // Add a pause at the end of each paragraph
-    }
-  });
-
-  const voices = ["en-US-Chirp3-HD-Sulafat", "en-US-Chirp3-HD-Algenib"]
-    .sort(() => 0.5 - Math.random())
-    .slice(0, 2);
-
-  const savedFiles = [];
-
-  for (let i = 0; i < paragraphs.length; i++) {
-    const escapedParagraph = paragraphs[i];
-    const voice = voices[i % 2]; // Alternate between two voices
-    const request = {
-      input: { text: escapedParagraph },
-      voice: { languageCode: "en-US", name: voice },
-      audioConfig: { audioEncoding: "MP3" as const },
-    };
-
-    // Creates a client
-    const ttsClient = new textToSpeech.TextToSpeechClient({
-      apiKey: process.env.GOOGLE_API_KEY || "",
-    });
-
-    try {
-      // Perform the text-to-speech request
-      const [response] = await ttsClient.synthesizeSpeech(request);
-
-      if (!response || !response.audioContent) {
-        console.error(
-          `Failed to synthesize speech for paragraph ${i + 1} of ${organizationName}`
-        );
-        continue;
-      }
-
-      // Convert Uint8Array to base64 for frontend consumption
-      const base64Audio = Buffer.from(response.audioContent as Uint8Array).toString('base64');
-      savedFiles.push({
-        index: i,
-        audioData: base64Audio,
-        paragraph: escapedParagraph.substring(0, 50) + '...' // Preview text
-      });
-    } catch (error) {
-      console.error(
-        `Error synthesizing speech for paragraph ${i + 1} of ${organizationName}:`,
-        error
-      );
-      continue;
-    }
-  }
-
-  return NextResponse.json(
-    {
-        script: script,
-        savedFiles: savedFiles,
-        audioFiles: savedFiles.length,
-        message: `Generated ${savedFiles.length} audio segments for ${organizationName}`
-    },
-    { status: 200 }
-    );
-
 }

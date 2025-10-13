@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
+import NavBar from '@/components/NavBar';
+import { LOCALSTORAGE_SEGMENTS_KEY, ExportSegment, saveSegmentsToLocalStorage, loadSegmentsFromLocalStorage, downloadJSON } from '@/utils/scriptTransfer';
 // import "bootstrap/dist/js/bootstrap.bundle.min.js";
 
 type AudioFiles = {
@@ -19,7 +21,6 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
   const [isMerging, setIsMerging] = useState(false);
   const [mergedAudioUrl, setMergedAudioUrl] = useState<string | null>(null);
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
-  const [autoMergeAttempted, setAutoMergeAttempted] = useState(false);
   const ffmpegRef = useRef(new FFmpeg());
   
   // Load FFmpeg when component mounts
@@ -41,13 +42,22 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
     loadFFmpeg();
   }, []);
 
-  // Auto-merge when FFmpeg is loaded and audio files are available
+  // Auto-merge whenever FFmpeg is ready and audioFiles changes
   useEffect(() => {
-    if (ffmpegLoaded && audioFiles.length > 0 && !autoMergeAttempted && !mergedAudioUrl) {
-      setAutoMergeAttempted(true);
+    if (ffmpegLoaded && audioFiles.length > 0) {
       mergeAudioFiles();
     }
-  }, [ffmpegLoaded, audioFiles.length, autoMergeAttempted, mergedAudioUrl]);
+    // If there are no audio files, clear any previously merged URL
+    if (audioFiles.length === 0 && mergedAudioUrl) {
+      try {
+        URL.revokeObjectURL(mergedAudioUrl);
+      } catch (e) {
+        // ignore
+      }
+      setMergedAudioUrl(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ffmpegLoaded, audioFiles]);
 
   const mergeAudioFiles = async () => {
     if (!ffmpegLoaded || audioFiles.length === 0) return;
@@ -63,6 +73,15 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
           const fileName = `input${i}.mp3`;
           const audioData = audioFiles[i].audioData;
           const audioBuffer = Uint8Array.from(atob(audioData), c => c.charCodeAt(0));
+          // Remove any pre-existing file in FFmpeg FS to avoid EEXIST/FS errors
+          try {
+            // @ts-ignore - use low-level FS if available
+            if ((ffmpeg as any).FS) {
+              try { (ffmpeg as any).FS("unlink", fileName); } catch (e) { /* ignore if not present */ }
+            }
+          } catch (e) {
+            // ignore
+          }
           await ffmpeg.writeFile(fileName, audioBuffer);
           inputFiles.push(fileName);
         } catch (e) {
@@ -76,7 +95,17 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
 
       // Create concat file list
       const concatList = inputFiles.map(file => `file '${file}'`).join('\n');
-      await ffmpeg.writeFile('filelist.txt', concatList);
+      // Write concat list as binary to avoid FS text issues
+      const encoder = new TextEncoder();
+      const concatBytes = encoder.encode(concatList);
+      try {
+        if ((ffmpeg as any).FS) {
+          try { (ffmpeg as any).FS("unlink", 'filelist.txt'); } catch (e) { /* ignore */ }
+        }
+      } catch (e) {
+        // ignore
+      }
+      await ffmpeg.writeFile('filelist.txt', concatBytes);
 
       // Run FFmpeg concat command
       await ffmpeg.exec([
@@ -91,8 +120,25 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
       const data = await ffmpeg.readFile('output.mp3');
       const uint8Array = new Uint8Array(data as unknown as ArrayBuffer);
       const blob = new Blob([uint8Array], { type: 'audio/mp3' });
+      // Revoke previous merged URL if present
+      if (mergedAudioUrl) {
+        try { URL.revokeObjectURL(mergedAudioUrl); } catch (e) { /* ignore */ }
+      }
       const url = URL.createObjectURL(blob);
       setMergedAudioUrl(url);
+
+      // Clean up FFmpeg FS temporary files
+      try {
+        if ((ffmpeg as any).FS) {
+          try { (ffmpeg as any).FS("unlink", 'output.mp3'); } catch (e) { /* ignore */ }
+          try { (ffmpeg as any).FS("unlink", 'filelist.txt'); } catch (e) { /* ignore */ }
+          for (const f of inputFiles) {
+            try { (ffmpeg as any).FS("unlink", f); } catch (e) { /* ignore */ }
+          }
+        }
+      } catch (e) {
+        // ignore cleanup errors
+      }
 
     } catch (error) {
       console.error('Error merging audio files:', error);
@@ -335,32 +381,73 @@ export default function Home() {
 
     // Step 4: Generate Podcast Files
     try {
-      setLog((prev) => [...prev, "Generating individual podcast files..."]);
-      const podcastResponse = await fetch("/api/generatePodcasts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || "Organization Name Not Provided" }),
+      setLog((prev) => [...prev, "Generating podcast script..."]);
+
+      // 1) Generate the script (structure + paragraphs)
+      const scriptResp = await fetch('/api/generateScript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || 'Organization Name Not Provided' }),
       });
 
-      if (!podcastResponse.ok) {
-        setLog((prev) => [...prev, `❌ Error generating podcast files: ${podcastResponse.status} - ${podcastResponse.statusText}`]);
-        throw new Error("Network response was not ok");
+      if (!scriptResp.ok) {
+        setLog((prev) => [...prev, `❌ Error generating script: ${scriptResp.status} - ${scriptResp.statusText}`]);
+        throw new Error('Network response was not ok (generateScript)');
       }
 
-      const podcastData = await podcastResponse.json();
-      setPodcastFiles(podcastData.savedFiles || []);
-      setPodcastScript(podcastData.script || "");
-      setLog((prev) => [...prev, "✅ Podcast files generated."]);
+      const scriptData = await scriptResp.json();
+      const generatedScript: string = scriptData.script || scriptData.text || '';
+      setPodcastScript(generatedScript);
+      setLog((prev) => [...prev, '✅ Script generated.']);
+
+      // 2) Build segments array for TTS. Prefer scriptArray from the server if present.
+      let segmentsForTTS: Array<{ speaker?: string; text: string }> = [];
+
+      if (Array.isArray(scriptData.scriptArray) && scriptData.scriptArray.length > 0) {
+        segmentsForTTS = scriptData.scriptArray
+          .map((p: any, idx: number) => {
+            const speakerRaw = (p.speaker || '').toString().toLowerCase();
+            const speaker = speakerRaw.includes('1') ? 'Speaker 1' : 'Speaker 2';
+            return { speaker, text: (p.text || '').toString().replace(/\n/g, ' ').trim() };
+          })
+          .filter((s: any) => s.text && s.text.length > 0);
+      } else if (generatedScript) {
+        // Fallback: split by double newline and alternate speakers
+        const paragraphs = generatedScript.split('\n\n').map((p) => p.replace(/\n/g, ' ').trim()).filter((p) => p.length > 0);
+        segmentsForTTS = paragraphs.map((text, idx) => ({ speaker: idx % 2 === 0 ? 'Speaker 1' : 'Speaker 2', text }));
+      }
+
+      if (segmentsForTTS.length === 0) {
+        setLog((prev) => [...prev, '⚠️ No script segments available for TTS.']);
+        return;
+      }
+
+      setLog((prev) => [...prev, `Generating ${segmentsForTTS.length} audio segments from script...`]);
+
+      const ttsResp = await fetch('/api/scriptToAudio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segments: segmentsForTTS }),
+      });
+
+      if (!ttsResp.ok) {
+        const text = await ttsResp.text();
+        setLog((prev) => [...prev, `❌ Error generating TTS: ${ttsResp.status} ${ttsResp.statusText} ${text}`]);
+        throw new Error('Network response was not ok (scriptToAudio)');
+      }
+
+      const ttsData = await ttsResp.json();
+      setPodcastFiles(ttsData.savedFiles || []);
+      setLog((prev) => [...prev, `✅ Generated ${ttsData.savedFiles?.length ?? 0} audio segments.`]);
     } catch (error) {
-      setLog((prev) => [...prev, `❌ Error during podcast generation: ${error}`]);
-      console.error("Error during podcast generation:", error);
+      setLog((prev) => [...prev, `❌ Error during podcast generation: ${String(error)}`]);
+      console.error('Error during podcast generation:', error);
     }
   };
 
   return (
     <div className="min-vh-100 container py-5">
+      <NavBar />
       <div
         className="container shadow p-4 m-auto rounded-md"
         style={{
@@ -370,9 +457,6 @@ export default function Home() {
         }}
       >
         <h1 className="text-center">Eye Spy Org Unpacker</h1>
-        <div className="d-flex justify-content-center mb-3">
-          <a href="/batch" className="btn btn-outline-secondary">📋 Batch Process Multiple Sites</a>
-        </div>
         <div className="row">
           <div className="col-md-6">
             <div className="p-3 bg-white rounded-lg shadow-sm">
@@ -443,6 +527,138 @@ export default function Home() {
         <div className="mb-3">
           <h4>Podcast Script</h4>
           <pre className="text-wrap">{podcastScript || "No script available."}</pre>
+          <div className="mt-2 d-flex gap-2 align-items-center">
+            <button
+              className="btn btn-sm btn-outline-primary"
+              onClick={() => {
+                // save to localStorage and download script as text
+                try {
+                  const key = 'podcastScript';
+                  localStorage.setItem(key, podcastScript || '');
+                  const blob = new Blob([podcastScript || ''], { type: 'text/plain' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'podcast-script.txt';
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+                  setLog((prev) => [...prev, '✅ Script exported to localStorage and downloaded.']);
+                } catch (e) {
+                  setLog((prev) => [...prev, '❌ Failed to export script.']);
+                }
+              }}
+              disabled={!podcastScript}
+            >
+              Export Script
+            </button>
+
+            <button
+              className="btn btn-sm btn-outline-secondary"
+              onClick={async () => {
+                if (!podcastScript) return;
+                try {
+                  await navigator.clipboard.writeText(podcastScript || '');
+                  setLog((prev) => [...prev, '✅ Script copied to clipboard.']);
+                } catch (e) {
+                  setLog((prev) => [...prev, '❌ Failed to copy script to clipboard.']);
+                }
+              }}
+              disabled={!podcastScript}
+            >
+              Copy Script
+            </button>
+
+            {/* Segment JSON export/import symmetry */}
+            <button
+              className="btn btn-sm btn-outline-info"
+              onClick={() => {
+                // Export segments derived from the generated script
+                if (!podcastScript) {
+                  setLog((prev) => [...prev, '⚠️ No script available to export as segments.']);
+                  return;
+                }
+                try {
+                  const paragraphs = podcastScript.split('\n\n').map(p => p.replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+                  const exportData: ExportSegment[] = paragraphs.map((text, idx) => ({ speakerIndex: idx % 2 === 0 ? 0 : 1, text }));
+                  saveSegmentsToLocalStorage(LOCALSTORAGE_SEGMENTS_KEY, exportData);
+                  downloadJSON(exportData, 'podcast-segments.json');
+                  setLog((prev) => [...prev, `✅ Exported ${exportData.length} segments as JSON.`]);
+                } catch (e) {
+                  setLog((prev) => [...prev, '❌ Failed to export segments as JSON.']);
+                }
+              }}
+              disabled={!podcastScript}
+            >
+              Export Segments (JSON)
+            </button>
+
+            {/* <button
+              className="btn btn-sm btn-outline-dark"
+              onClick={async () => {
+                // Import segments from localStorage and synthesize audio
+                try {
+                  const loaded = loadSegmentsFromLocalStorage(LOCALSTORAGE_SEGMENTS_KEY);
+                  if (!loaded || loaded.length === 0) {
+                    setLog((prev) => [...prev, '⚠️ No segments found in localStorage.']);
+                    return;
+                  }
+                  setLog((prev) => [...prev, `Importing ${loaded.length} segments from localStorage and generating audio...`]);
+                  const segmentsForTTS = loaded.map(s => ({ speaker: s.speakerIndex === 0 ? 'Speaker 1' : 'Speaker 2', text: s.text }));
+                  const ttsResp = await fetch('/api/scriptToAudio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segments: segmentsForTTS }) });
+                  if (!ttsResp.ok) {
+                    const text = await ttsResp.text();
+                    setLog((prev) => [...prev, `❌ Error generating TTS from imported segments: ${ttsResp.status} ${ttsResp.statusText} ${text}`]);
+                    return;
+                  }
+                  const ttsData = await ttsResp.json();
+                  setPodcastFiles(ttsData.savedFiles || []);
+                  // Rebuild script from imported segments
+                  const rebuiltScript = loaded.map(s => s.text).join('\n\n');
+                  setPodcastScript(rebuiltScript);
+                  setLog((prev) => [...prev, `✅ Imported segments and generated ${ttsData.savedFiles?.length ?? 0} audio files.`]);
+                } catch (e) {
+                  setLog((prev) => [...prev, `❌ Failed to import segments from localStorage: ${String(e)}`]);
+                }
+              }}
+            >
+              Import Segments (Local)
+            </button> */}
+
+            {/* <label className="btn btn-sm btn-outline-secondary mb-0">
+              Import Segments (File)
+              <input
+                type="file"
+                accept="application/json"
+                hidden
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const text = await file.text();
+                    const parsed = JSON.parse(text) as ExportSegment[];
+                    if (!Array.isArray(parsed)) throw new Error('Invalid JSON format');
+                    setLog((prev) => [...prev, `Importing ${parsed.length} segments from file and generating audio...`]);
+                    const segmentsForTTS = parsed.map(s => ({ speaker: s.speakerIndex === 0 ? 'Speaker 1' : 'Speaker 2', text: s.text }));
+                    const ttsResp = await fetch('/api/scriptToAudio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segments: segmentsForTTS }) });
+                    if (!ttsResp.ok) {
+                      const txt = await ttsResp.text();
+                      setLog((prev) => [...prev, `❌ Error generating TTS from imported file: ${ttsResp.status} ${ttsResp.statusText} ${txt}`]);
+                      return;
+                    }
+                    const ttsData = await ttsResp.json();
+                    setPodcastFiles(ttsData.savedFiles || []);
+                    const rebuiltScript = parsed.map(s => s.text).join('\n\n');
+                    setPodcastScript(rebuiltScript);
+                    setLog((prev) => [...prev, `✅ Imported segments from file and generated ${ttsData.savedFiles?.length ?? 0} audio files.`]);
+                  } catch (err) {
+                    setLog((prev) => [...prev, `❌ Failed to import segments from file: ${String(err)}`]);
+                  }
+                }}
+              />
+            </label> */}
+          </div>
         </div>
         
         {/* Audio Files */}
