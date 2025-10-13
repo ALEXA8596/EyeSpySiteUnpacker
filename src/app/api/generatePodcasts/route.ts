@@ -12,9 +12,15 @@ export async function POST(request: NextRequest) {
     email,
     address,
     phoneNumber,
+    promptType, // 0 - old, 1 - new
+    voiceMode = 0,
+    speaker1Voice,
+    speaker2Voice,
   } = await request.json();
+  let basePrompt;
 
-  const basePrompt =
+  if (!promptType || promptType == 1) {
+     basePrompt =
     `Generate a podcast-style audio overview script based on the provided content for "${organizationName}". The output should be a conversational script between two AI hosts discussing the main points, insights, and implications of the input material. Do not include a separate title line; begin directly with the script content. Do not give the podcast a name. Just start talking about the subject.\n\n` +
     `Context and contact details (use where helpful, but do not read lists verbatim):\nWebsite: ${websiteURL}\nEmail: ${email}\nPhone: ${phoneNumber}\nAddress: ${address}\n\n` +
     `INSERTBODIESHERE\n\n` +
@@ -40,6 +46,19 @@ export async function POST(request: NextRequest) {
     `- Avoid sounding like an advertisement. If the source lists events, mention only regularly held events, not one-off occurrences.\n` +
     `- Refine the output: begin with an outline, develop a coherent draft, then add small speech-level edits so the script reads naturally when spoken.\n\n` +
     `The script will be read by two alternating speakers. Structure the script so that each paragraph represents a block of text to be read by one speaker before switching to the other. Ensure paragraphs are separated by a double newline (\\n\\n). Do not prefix paragraphs with explicit labels such as "Host 1:" or "Host 2:" — the alternation will be inferred by paragraph order. Do not introduce the script with any meta commentary, explanation, or an outline of what will be covered. Instead, directly go into the podcast dialogue. Do not say something along the lines of "Welcome to the show."`;
+  } else {
+    basePrompt = 
+    `You are an expert script writer. Create a script for an audio overview of the organization "${organizationName}". The script should be informative and conversational. Do not introduce the script with a title. The audience is primarily low vision or blind people. Appropriately use the following details:\n\n` +
+    `Website: ${websiteURL}\n` +
+    `Email: ${email}\n` +
+    `Phone: ${phoneNumber}\n` +
+    `Address: ${address}\n` +
+    `INSERTBODIESHERE\n` +
+    "If applicable, give a list and description of the services and the events that the organization offers. Do not sound like an advertisement, and do not mention one off events. Only mention regularly held events (i.e. Book Clubs or Meetings). If there are no events or meetings, do not mention them and skip over them.\n" +
+    `The script should be approximately 5 minutes long when read aloud. You may go up to 7 minutes.` +
+    `Do not use any offensive terms, such as 'blind' or 'visually impaired'. Instead, use terms like 'low vision' or 'people with low vision' or 'people who are blind'.\n` +
+    `\n\nThe script will be read by 2 alternating speakers. Structure the script so that each paragraph represents a block of text to be read by one speaker before switching to the other. Ensure paragraphs are separated by a double newline (\\n\\n). Do not label the speakers (e.g., "Host 1:", "Speaker 2:"). Do not introduce the script with any meta commentary, explanation, or an outline of what will be covered. Instead, directly go into the podcast dialogue. Do not say something along the lines of "Welcome to the show."`;
+  }
 
   const client = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || "",
@@ -168,51 +187,85 @@ export async function POST(request: NextRequest) {
       speaker2Parts.push(escapedParagraph.replace(".", "...")); // Add a pause at the end of each paragraph
     }
   });
-
-  const voices = ["en-US-Chirp3-HD-Sulafat", "en-US-Chirp3-HD-Algenib"]
-    .sort(() => 0.5 - Math.random())
-    .slice(0, 2);
+  
+  let voices = ["en-US-Chirp3-HD-Sulafat", "en-US-Chirp3-HD-Algenib"];
+  if (voiceMode === 1 && speaker1Voice && speaker2Voice) {
+    voices = [speaker1Voice, speaker2Voice];
+  } else {
+    voices = voices.sort(() => 0.5 - Math.random()).slice(0, 2);
+  }
 
   const savedFiles = [];
 
-  for (let i = 0; i < paragraphs.length; i++) {
-    const escapedParagraph = paragraphs[i];
-    const voice = voices[i % 2]; // Alternate between two voices
-    const request = {
-      input: { text: escapedParagraph },
-      voice: { languageCode: "en-US", name: voice },
-      audioConfig: { audioEncoding: "MP3" as const },
-    };
+  // Create a single TTS client instance
+  const ttsClient = new textToSpeech.TextToSpeechClient({
+    apiKey: process.env.GOOGLE_API_KEY || "",
+  });
 
-    // Creates a client
-    const ttsClient = new textToSpeech.TextToSpeechClient({
-      apiKey: process.env.GOOGLE_API_KEY || "",
-    });
+  // Simple sleep helper for retries
+  const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-    try {
-      // Perform the text-to-speech request
-      const [response] = await ttsClient.synthesizeSpeech(request);
-
-      if (!response || !response.audioContent) {
-        console.error(
-          `Failed to synthesize speech for paragraph ${i + 1} of ${organizationName}`
-        );
-        continue;
+  // Retry wrapper with exponential backoff
+  const synthesizeWithRetries = async (requestObj: any, attempts = 3) => {
+    let attempt = 0;
+    while (attempt < attempts) {
+      try {
+        const [response] = await ttsClient.synthesizeSpeech(requestObj);
+        return response;
+      } catch (err) {
+        attempt++;
+        if (attempt >= attempts) throw err;
+        const backoff = 100 * Math.pow(2, attempt) + Math.random() * 50;
+        await sleep(backoff);
       }
+    }
+    throw new Error('Unreachable');
+  };
 
-      // Convert Uint8Array to base64 for frontend consumption
-      const base64Audio = Buffer.from(response.audioContent as Uint8Array).toString('base64');
-      savedFiles.push({
-        index: i,
-        audioData: base64Audio,
-        paragraph: escapedParagraph.substring(0, 50) + '...' // Preview text
-      });
-    } catch (error) {
-      console.error(
-        `Error synthesizing speech for paragraph ${i + 1} of ${organizationName}:`,
-        error
-      );
-      continue;
+  // Build items for synthesis
+  const items = paragraphs.map((escapedParagraph, i) => ({
+    index: i,
+    text: escapedParagraph,
+    voice: voices[i % 2],
+  }));
+
+  const concurrency = 4;
+  for (let start = 0; start < items.length; start += concurrency) {
+    const batch = items.slice(start, start + concurrency).map((it) =>
+      (async () => {
+        const request = {
+          input: { text: it.text },
+          voice: { languageCode: "en-US", name: it.voice },
+          audioConfig: { audioEncoding: "MP3" as const },
+        };
+
+        try {
+          const response = await synthesizeWithRetries(request, 3);
+          if (!response || !response.audioContent) {
+            console.error(
+              `Failed to synthesize speech for paragraph ${it.index + 1} of ${organizationName}`
+            );
+            return null;
+          }
+          const base64Audio = Buffer.from(response.audioContent as Uint8Array).toString('base64');
+          return {
+            index: it.index,
+            audioData: base64Audio,
+            paragraph: it.text.substring(0, 50) + '...'
+          };
+        } catch (error) {
+          console.error(
+            `Error synthesizing speech for paragraph ${it.index + 1} of ${organizationName}:`,
+            error
+          );
+          return null;
+        }
+      })()
+    );
+
+    const results = await Promise.all(batch);
+    for (const r of results) {
+      if (r) savedFiles.push(r);
     }
   }
 

@@ -270,6 +270,28 @@ export default function Home() {
 
   const [podcastScript, setPodcastScript] = useState<string>("");
   
+  const [promptVersion, setPromptVersion] = useState<number>(1); // 0 = legacy, 1 = new
+  const [voiceMode, setVoiceMode] = useState<number>(0); // 0 = randomize, 1 = fixed
+  const [speaker1Voice, setSpeaker1Voice] = useState<string>('en-US-Chirp3-HD-Sulafat');
+  const [speaker2Voice, setSpeaker2Voice] = useState<string>('en-US-Chirp3-HD-Algenib');
+  const AVAILABLE_VOICES = ['en-US-Chirp3-HD-Sulafat', 'en-US-Chirp3-HD-Algenib'];
+
+  // Ensure voices are distinct when switching to fixed mode or when one changes
+  useEffect(() => {
+    if (voiceMode === 1) {
+      if (speaker1Voice === speaker2Voice) {
+        const other = AVAILABLE_VOICES.find(v => v !== speaker1Voice) || AVAILABLE_VOICES[0];
+        setSpeaker2Voice(other);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode]);
+
+  // Prompt templates (display-only)
+  const newPromptTemplate = `Generate a podcast-style audio overview script based on the provided content for "{organizationName}". The output should be a conversational script between two AI hosts discussing the main points, insights, and implications of the input material. Do not include a separate title line; begin directly with the script content. Do not give the podcast a name. Just start talking about the subject.\n\nContext and contact details (use where helpful, but do not read lists verbatim):\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\n\nINSERTBODIESHERE\n\nPodcast Format:... (truncated for UI)`;
+
+  const legacyPromptTemplate = `You are an expert script writer. Create a script for an audio overview of the organization "{organizationName}". The script should be informative and conversational. Do not introduce the script with a title. The audience is primarily low vision or blind people. Appropriately use the following details:\n\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\nINSERTBODIESHERE\n\nIf applicable, give a list and description of the services and the events that the organization offers. Do not sound like an advertisement... (truncated for UI)`;
+  
   type Segment = { id: string; speaker: 'Speaker 1' | 'Speaker 2'; text: string };
   const [segments, setSegments] = useState<Segment[]>([]);
   const [showScriptEditor, setShowScriptEditor] = useState(false);
@@ -285,6 +307,18 @@ export default function Home() {
     const nextSpeaker = last && last.speaker === 'Speaker 1' ? 'Speaker 2' : 'Speaker 1';
     const newSeg: Segment = { id: String(Date.now()) + Math.random(), speaker: nextSpeaker, text: '' };
     setSegments(prev => [...prev, newSeg]);
+  };
+
+  // Ensure the first segment is Speaker 1 and alternate speakers so there are no back-to-back same speakers
+  const distributeLines = () => {
+    setSegments(prev => {
+      const distributed = prev.map((s, i): Segment => ({ ...s, speaker: i % 2 === 0 ? 'Speaker 1' : 'Speaker 2' }));
+      // Update displayed script as well
+      const newScript = distributed.map(s => s.text).filter(t => t.trim()).join('\n\n');
+      setPodcastScript(newScript);
+      return distributed;
+    });
+    setLog(prev => [...prev, '✅ Distributed lines: alternating speakers starting with Speaker 1']);
   };
 
   const removeSegment = (id: string) => {
@@ -336,7 +370,7 @@ export default function Home() {
       const response = await fetch('/api/scriptToAudio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segments: cleaned }),
+        body: JSON.stringify({ segments: cleaned, voiceMode, speaker1Voice, speaker2Voice }),
       });
 
       if (!response.ok) {
@@ -472,7 +506,7 @@ export default function Home() {
       const scriptResp = await fetch('/api/generateScript', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || 'Organization Name Not Provided' }),
+        body: JSON.stringify({ pageBodies: pageBodiesLiveCopy, websiteURL, organizationName: scrapedData.basicInformation?.organizationName || 'Organization Name Not Provided', promptType: promptVersion, voiceMode, speaker1Voice, speaker2Voice }),
       });
 
       if (!scriptResp.ok) {
@@ -550,6 +584,122 @@ export default function Home() {
                     value={websiteURL}
                     onChange={(e) => setWebsiteURL(e.target.value)}
                   />
+                </div>
+
+                <div className="form-group mb-3">
+                  <label htmlFor="promptVersion" className="form-label">
+                    Prompt Version
+                  </label>
+                  <div>
+                    <div className="form-check form-check-inline">
+                      <input
+                        className="form-check-input"
+                        type="radio"
+                        name="promptVersion"
+                        id="promptNew"
+                        checked={promptVersion === 1}
+                        onChange={() => setPromptVersion(1)}
+                      />
+                      <label className="form-check-label" htmlFor="promptNew">
+                        New Prompt
+                      </label>
+                    </div>
+
+                    <div className="form-check form-check-inline">
+                      <input
+                        className="form-check-input"
+                        type="radio"
+                        name="promptVersion"
+                        id="promptOld"
+                        checked={promptVersion === 0}
+                        onChange={() => setPromptVersion(0)}
+                      />
+                      <label className="form-check-label" htmlFor="promptOld">
+                        Legacy Prompt
+                      </label>
+                    </div>
+
+                    <div className="form-text small text-muted mt-1">
+                      Choose which prompt template to use when generating the podcast script.
+                    </div>
+                  </div>
+                  <div className="form-group mt-3">
+                    <label className="form-label">Voice Assignment</label>
+                    <div>
+                      <div className="form-check form-check-inline">
+                        <input className="form-check-input" type="radio" name="voiceMode" id="voiceRandom" checked={voiceMode === 0} onChange={() => setVoiceMode(0)} />
+                        <label className="form-check-label" htmlFor="voiceRandom">Randomize Voices</label>
+                      </div>
+                      <div className="form-check form-check-inline">
+                        <input className="form-check-input" type="radio" name="voiceMode" id="voiceFixed" checked={voiceMode === 1} onChange={() => setVoiceMode(1)} />
+                        <label className="form-check-label" htmlFor="voiceFixed">Fixed Voices</label>
+                      </div>
+
+                      {voiceMode === 1 && (
+                        <div className="d-flex gap-2 mt-2 align-items-center flex-wrap">
+                          <div className="form-group">
+                            <label className="form-label small mb-1">Speaker 1 Voice</label>
+                            <select className="form-select form-select-sm" value={speaker1Voice} onChange={(e) => {
+                                const v = e.target.value;
+                                setSpeaker1Voice(v);
+                                // if equal, pick opposite
+                                if (v === speaker2Voice) {
+                                  const other = AVAILABLE_VOICES.find(x => x !== v) || AVAILABLE_VOICES[0];
+                                  setSpeaker2Voice(other);
+                                }
+                              }}>
+                                <option value="en-US-Chirp3-HD-Sulafat">en-US-Chirp3-HD-Sulafat</option>
+                                <option value="en-US-Chirp3-HD-Algenib">en-US-Chirp3-HD-Algenib</option>
+                              </select>
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label small mb-1">Speaker 2 Voice</label>
+                            <select className="form-select form-select-sm" value={speaker2Voice} onChange={(e) => {
+                                const v = e.target.value;
+                                setSpeaker2Voice(v);
+                                if (v === speaker1Voice) {
+                                  const other = AVAILABLE_VOICES.find(x => x !== v) || AVAILABLE_VOICES[0];
+                                  setSpeaker1Voice(other);
+                                }
+                              }}>
+                              <option value="en-US-Chirp3-HD-Sulafat">en-US-Chirp3-HD-Sulafat</option>
+                              <option value="en-US-Chirp3-HD-Algenib">en-US-Chirp3-HD-Algenib</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* Prompt Templates Accordion */}
+                  <div className="mt-3">
+                    <div className="accordion" id="promptTemplatesAccordion">
+                      <div className="accordion-item">
+                        <h2 className="accordion-header" id="headingNewPrompt">
+                          <button className="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseNewPrompt" aria-expanded="false" aria-controls="collapseNewPrompt">
+                            New Prompt Template
+                          </button>
+                        </h2>
+                        <div id="collapseNewPrompt" className="accordion-collapse collapse" aria-labelledby="headingNewPrompt" data-bs-parent="#promptTemplatesAccordion">
+                          <div className="accordion-body">
+                            <pre style={{ whiteSpace: 'pre-wrap' }}>{newPromptTemplate}</pre>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="accordion-item">
+                        <h2 className="accordion-header" id="headingLegacyPrompt">
+                          <button className="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLegacyPrompt" aria-expanded="false" aria-controls="collapseLegacyPrompt">
+                            Legacy Prompt Template
+                          </button>
+                        </h2>
+                        <div id="collapseLegacyPrompt" className="accordion-collapse collapse" aria-labelledby="headingLegacyPrompt" data-bs-parent="#promptTemplatesAccordion">
+                          <div className="accordion-body">
+                            <pre style={{ whiteSpace: 'pre-wrap' }}>{legacyPromptTemplate}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <button type="submit" className="btn btn-success">
@@ -778,6 +928,13 @@ export default function Home() {
                     onClick={addSegment}
                   >
                     ➕ Add Segment
+                  </button>
+                  <button
+                    className="btn btn-outline-info"
+                    onClick={distributeLines}
+                    disabled={segments.length === 0}
+                  >
+                    🔀 Distribute Lines
                   </button>
                   <span className="small text-muted">
                     {segments.length} segment{segments.length !== 1 ? 's' : ''}

@@ -1,10 +1,16 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { toBlobURL } from '@ffmpeg/util';
-import NavBar from '@/components/NavBar';
-import { LOCALSTORAGE_SEGMENTS_KEY, ExportSegment, saveSegmentsToLocalStorage, loadSegmentsFromLocalStorage, downloadJSON } from '@/utils/scriptTransfer';
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { toBlobURL } from "@ffmpeg/util";
+import NavBar from "@/components/NavBar";
+import {
+  LOCALSTORAGE_SEGMENTS_KEY,
+  ExportSegment,
+  saveSegmentsToLocalStorage,
+  loadSegmentsFromLocalStorage,
+  downloadJSON,
+} from "@/utils/scriptTransfer";
 
 type AudioFiles = {
   audioData: string; // Base64 encoded audio data
@@ -21,23 +27,29 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
   const [isMerging, setIsMerging] = useState(false);
   const [mergedAudioUrl, setMergedAudioUrl] = useState<string | null>(null);
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
-  
+
   const ffmpegRef = useRef(new FFmpeg());
-  
+
   // Load FFmpeg when component mounts
   useEffect(() => {
     const loadFFmpeg = async () => {
       const ffmpeg = ffmpegRef.current;
       try {
-        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+        const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
         await ffmpeg.load({
-          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+          coreURL: await toBlobURL(
+            `${baseURL}/ffmpeg-core.js`,
+            "text/javascript"
+          ),
+          wasmURL: await toBlobURL(
+            `${baseURL}/ffmpeg-core.wasm`,
+            "application/wasm"
+          ),
         });
         setFfmpegLoaded(true);
-        console.log('FFmpeg loaded successfully');
+        console.log("FFmpeg loaded successfully");
       } catch (error) {
-        console.error('Failed to load FFmpeg:', error);
+        console.error("Failed to load FFmpeg:", error);
       }
     };
     loadFFmpeg();
@@ -48,17 +60,29 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
     if (ffmpegLoaded && audioFiles.length > 0) {
       // revoke any previous merged url to ensure we don't reuse a stale file
       if (mergedAudioUrl) {
-        try { URL.revokeObjectURL(mergedAudioUrl); } catch (e) { /* ignore */ }
+        try {
+          URL.revokeObjectURL(mergedAudioUrl);
+        } catch (e) {
+          /* ignore */
+        }
         setMergedAudioUrl(null);
       }
       mergeAudioFiles();
     } else if (!ffmpegLoaded && mergedAudioUrl) {
       // if FFmpeg not loaded yet, clear any merged url to avoid stale state
-      try { URL.revokeObjectURL(mergedAudioUrl); } catch (e) { /* ignore */ }
+      try {
+        URL.revokeObjectURL(mergedAudioUrl);
+      } catch (e) {
+        /* ignore */
+      }
       setMergedAudioUrl(null);
     } else if (ffmpegLoaded && audioFiles.length === 0 && mergedAudioUrl) {
       // no audio files -> clear merged url
-      try { URL.revokeObjectURL(mergedAudioUrl); } catch (e) { /* ignore */ }
+      try {
+        URL.revokeObjectURL(mergedAudioUrl);
+      } catch (e) {
+        /* ignore */
+      }
       setMergedAudioUrl(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -66,10 +90,10 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
 
   const mergeAudioFiles = async () => {
     if (!ffmpegLoaded || audioFiles.length === 0) return;
-    
+
     setIsMerging(true);
     const ffmpeg = ffmpegRef.current;
-    
+
     try {
       // Write input files to FFmpeg filesystem
       const inputFiles: string[] = [];
@@ -77,9 +101,15 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
         try {
           const fileName = `input${i}.mp3`;
           const audioData = audioFiles[i].audioData;
-          const audioBuffer = Uint8Array.from(atob(audioData), c => c.charCodeAt(0));
+          const audioBuffer = Uint8Array.from(atob(audioData), (c) =>
+            c.charCodeAt(0)
+          );
           // remove existing file if present
-          try { await ffmpeg.deleteFile?.(fileName); } catch (e) { /* ignore */ }
+          try {
+            await ffmpeg.deleteFile?.(fileName);
+          } catch (e) {
+            /* ignore */
+          }
           await ffmpeg.writeFile(fileName, audioBuffer);
           inputFiles.push(fileName);
         } catch (e) {
@@ -91,46 +121,69 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
         throw new Error("Failed to prepare audio files for merging");
       }
 
-  // Create concat file list and write as Uint8Array
-  const concatList = inputFiles.map(file => `file '${file}'`).join('\n');
-  const encoder = new TextEncoder();
-  const concatBuffer = encoder.encode(concatList);
-  try { await ffmpeg.deleteFile?.('filelist.txt'); } catch (e) { /* ignore */ }
-  await ffmpeg.writeFile('filelist.txt', concatBuffer);
+      // Create concat file list and write as Uint8Array
+      const concatList = inputFiles.map((file) => `file '${file}'`).join("\n");
+      const encoder = new TextEncoder();
+      const concatBuffer = encoder.encode(concatList);
+      try {
+        await ffmpeg.deleteFile?.("filelist.txt");
+      } catch (e) {
+        /* ignore */
+      }
+      await ffmpeg.writeFile("filelist.txt", concatBuffer);
 
       // Run FFmpeg concat command
       await ffmpeg.exec([
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', 'filelist.txt',
-        '-c', 'copy',
-        'output.mp3'
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        "filelist.txt",
+        "-c",
+        "copy",
+        "output.mp3",
       ]);
 
       // Read the output file
-      const data = await ffmpeg.readFile('output.mp3');
+      const data = await ffmpeg.readFile("output.mp3");
       const uint8Array = new Uint8Array(data as unknown as ArrayBuffer);
-      const blob = new Blob([uint8Array], { type: 'audio/mp3' });
+      const blob = new Blob([uint8Array], { type: "audio/mp3" });
       const url = URL.createObjectURL(blob);
       // revoke previous url to avoid leaks
       if (mergedAudioUrl) {
-        try { URL.revokeObjectURL(mergedAudioUrl); } catch (e) { /* ignore */ }
+        try {
+          URL.revokeObjectURL(mergedAudioUrl);
+        } catch (e) {
+          /* ignore */
+        }
       }
       setMergedAudioUrl(url);
 
       // Clean up temp files from FFmpeg filesystem
       try {
         for (const f of inputFiles) {
-          try { await ffmpeg.deleteFile?.(f); } catch (e) { /* ignore */ }
+          try {
+            await ffmpeg.deleteFile?.(f);
+          } catch (e) {
+            /* ignore */
+          }
         }
-        try { await ffmpeg.deleteFile?.('filelist.txt'); } catch (e) { /* ignore */ }
-        try { await ffmpeg.deleteFile?.('output.mp3'); } catch (e) { /* ignore */ }
+        try {
+          await ffmpeg.deleteFile?.("filelist.txt");
+        } catch (e) {
+          /* ignore */
+        }
+        try {
+          await ffmpeg.deleteFile?.("output.mp3");
+        } catch (e) {
+          /* ignore */
+        }
       } catch (cleanupErr) {
-        console.warn('Error cleaning up ffmpeg FS:', cleanupErr);
+        console.warn("Error cleaning up ffmpeg FS:", cleanupErr);
       }
-
     } catch (error) {
-      console.error('Error merging audio files:', error);
+      console.error("Error merging audio files:", error);
     } finally {
       setIsMerging(false);
     }
@@ -147,8 +200,8 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
         }
       };
 
-      audioRef.addEventListener('ended', handleEnded);
-      return () => audioRef.removeEventListener('ended', handleEnded);
+      audioRef.addEventListener("ended", handleEnded);
+      return () => audioRef.removeEventListener("ended", handleEnded);
     }
   }, [audioRef, currentIndex, audioFiles.length]);
 
@@ -167,22 +220,24 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
   return (
     <div>
       <div className="d-flex align-items-center gap-2 mb-2 flex-wrap">
-        <button 
-          className="btn btn-primary btn-sm" 
+        <button
+          className="btn btn-primary btn-sm"
           onClick={playAll}
           disabled={isPlaying}
         >
           ▶ Play All Segments
         </button>
-        <button 
-          className="btn btn-secondary btn-sm" 
+        <button
+          className="btn btn-secondary btn-sm"
           onClick={pauseAll}
           disabled={!isPlaying}
         >
           ⏸ Pause
         </button>
         <span className="small text-muted">
-          {isPlaying ? `Playing segment ${currentIndex + 1} of ${audioFiles.length}` : 'Ready to play'}
+          {isPlaying
+            ? `Playing segment ${currentIndex + 1} of ${audioFiles.length}`
+            : "Ready to play"}
         </span>
       </div>
 
@@ -197,11 +252,14 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
           🔄 Auto-merging audio files into single podcast...
         </div>
       )}
-      
+
       {mergedAudioUrl && (
         <div className="alert alert-success">
           <h6>🎉 Complete Podcast Ready!</h6>
-          <p className="small mb-2">All audio segments have been automatically merged into a single podcast file:</p>
+          <p className="small mb-2">
+            All audio segments have been automatically merged into a single
+            podcast file:
+          </p>
           <audio controls className="w-100 mb-2" src={mergedAudioUrl}>
             Your browser does not support the audio element.
           </audio>
@@ -216,7 +274,7 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
           </div>
         </div>
       )}
-      
+
       {audioFiles.length > 0 && (
         <div>
           <h6 className="mt-3">Individual Segment Playback:</h6>
@@ -237,21 +295,54 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
   );
 }
 
+// Prompt templates (display-only)
+const newPromptTemplate = `Generate a podcast-style audio overview script based on the provided content for "{organizationName}". The output should be a conversational script between two AI hosts discussing the main points, insights, and implications of the input material. Do not include a separate title line; begin directly with the script content. Do not give the podcast a name. Just start talking about the subject.\n\nContext and contact details (use where helpful, but do not read lists verbatim):\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\n\nINSERTBODIESHERE\n\nPodcast Format:... (truncated for UI)`;
+
+const legacyPromptTemplate = `You are an expert script writer. Create a script for an audio overview of the organization "{organizationName}". The script should be informative and conversational. Do not introduce the script with a title. The audience is primarily low vision or blind people. Appropriately use the following details:\n\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\nINSERTBODIESHERE\n\nIf applicable, give a list and description of the services and the events that the organization offers. Do not sound like an advertisement... (truncated for UI)`;
+
 export default function PodcastEditor() {
   // Segment represents a block of dialog from a speaker
-  type Segment = { id: string; speaker: 'Speaker 1' | 'Speaker 2'; text: string };
+  type Segment = {
+    id: string;
+    speaker: "Speaker 1" | "Speaker 2";
+    text: string;
+  };
 
   const [segments, setSegments] = useState<Segment[]>(() => [
-    { id: String(Date.now()) + '-1', speaker: 'Speaker 1', text: '' },
-    { id: String(Date.now() + 1) + '-2', speaker: 'Speaker 2', text: '' },
-    { id: String(Date.now() + 2) + '-3', speaker: 'Speaker 1', text: '' },
-    { id: String(Date.now() + 3) + '-4', speaker: 'Speaker 2', text: '' },
+    { id: String(Date.now()) + "-1", speaker: "Speaker 1", text: "" },
+    { id: String(Date.now() + 1) + "-2", speaker: "Speaker 2", text: "" },
+    { id: String(Date.now() + 2) + "-3", speaker: "Speaker 1", text: "" },
+    { id: String(Date.now() + 3) + "-4", speaker: "Speaker 2", text: "" },
   ]);
 
   const [status, setStatus] = useState<string[]>([]);
   const [podcastFiles, setPodcastFiles] = useState<AudioFiles[]>([]);
   const [podcastScript, setPodcastScript] = useState<string>("");
   const [generating, setGenerating] = useState(false);
+  const [promptVersion, setPromptVersion] = useState<number>(1); // 0 = legacy, 1 = new
+  const [voiceMode, setVoiceMode] = useState<number>(0); // 0 = randomize, 1 = fixed
+  const [speaker1Voice, setSpeaker1Voice] = useState<string>(
+    "en-US-Chirp3-HD-Sulafat"
+  );
+  const [speaker2Voice, setSpeaker2Voice] = useState<string>(
+    "en-US-Chirp3-HD-Algenib"
+  );
+  const AVAILABLE_VOICES = [
+    "en-US-Chirp3-HD-Sulafat",
+    "en-US-Chirp3-HD-Algenib",
+  ];
+
+  useEffect(() => {
+    if (voiceMode === 1) {
+      if (speaker1Voice === speaker2Voice) {
+        const other =
+          AVAILABLE_VOICES.find((v) => v !== speaker1Voice) ||
+          AVAILABLE_VOICES[0];
+        setSpeaker2Voice(other);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode]);
 
   // load bootstrap JS (optional for accordions etc.)
   useEffect(() => {
@@ -260,66 +351,121 @@ export default function PodcastEditor() {
 
   const addSegment = () => {
     const last = segments[segments.length - 1];
-    const nextSpeaker = last && last.speaker === 'Speaker 1' ? 'Speaker 2' : 'Speaker 1';
-    const newSeg: Segment = { id: String(Date.now()) + Math.random(), speaker: nextSpeaker, text: '' };
-    setSegments(prev => [...prev, newSeg]);
+    const nextSpeaker =
+      last && last.speaker === "Speaker 1" ? "Speaker 2" : "Speaker 1";
+    const newSeg: Segment = {
+      id: String(Date.now()) + Math.random(),
+      speaker: nextSpeaker,
+      text: "",
+    };
+    setSegments((prev) => [...prev, newSeg]);
   };
 
   const removeSegment = (id: string) => {
-    setSegments(prev => prev.filter(s => s.id !== id));
+    setSegments((prev) => prev.filter((s) => s.id !== id));
   };
 
   const updateSegmentText = (id: string, text: string) => {
-    setSegments(prev => prev.map(s => s.id === id ? { ...s, text } : s));
+    setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, text } : s)));
   };
 
   const toggleSpeaker = (id: string) => {
-    setSegments(prev => prev.map(s => s.id === id ? { ...s, speaker: s.speaker === 'Speaker 1' ? 'Speaker 2' : 'Speaker 1' } : s));
+    setSegments((prev) =>
+      prev.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              speaker: s.speaker === "Speaker 1" ? "Speaker 2" : "Speaker 1",
+            }
+          : s
+      )
+    );
+  };
+
+  // Ensure the first segment is Speaker 1 and alternate speakers so there are no back-to-back same speakers
+  const distributeLines = () => {
+    setSegments((prev) => {
+      const distributed = prev.map(
+        (s, i): Segment => ({
+          ...s,
+          speaker: i % 2 === 0 ? "Speaker 1" : "Speaker 2",
+        })
+      );
+      // Update displayed script as well
+      const newScript = distributed
+        .map((s) => s.text)
+        .filter((t) => t.trim())
+        .join("\n\n");
+      setPodcastScript(newScript);
+      return distributed;
+    });
+    setStatus((prev) => [
+      ...prev,
+      "✅ Distributed lines: alternating speakers starting with Speaker 1",
+    ]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     // Validation: remove empty segments and enforce reasonable length
     const cleaned = segments
-      .map(s => ({ ...s, text: (s.text || '').replace(/\r/g, '') }))
-      .filter(s => s.text.trim().length > 0);
+      .map((s) => ({ ...s, text: (s.text || "").replace(/\r/g, "") }))
+      .filter((s) => s.text.trim().length > 0);
 
     if (cleaned.length === 0) {
-      setStatus(['⚠️ Validation failed: please add at least one non-empty segment before generating audio.']);
+      setStatus([
+        "⚠️ Validation failed: please add at least one non-empty segment before generating audio.",
+      ]);
       return;
     }
 
     // Max length guard (per segment)
-    const tooLong = cleaned.find(s => s.text.length > 10000);
+    const tooLong = cleaned.find((s) => s.text.length > 10000);
     if (tooLong) {
-      setStatus([`⚠️ One of the segments is too long (>10,000 chars). Please shorten it.`]);
+      setStatus([
+        `⚠️ One of the segments is too long (>10,000 chars). Please shorten it.`,
+      ]);
       return;
     }
 
-    setStatus(['Submitting segments to backend...']);
+    setStatus(["Submitting segments to backend..."]);
     setGenerating(true);
 
     try {
-      const response = await fetch('/api/scriptToAudio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segments: cleaned }),
+      const response = await fetch("/api/scriptToAudio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          segments: cleaned,
+          voiceMode,
+          speaker1Voice,
+          speaker2Voice,
+        }),
       });
 
       if (!response.ok) {
         const text = await response.text();
-        setStatus(prev => [...prev, `❌ Backend error: ${response.status} ${response.statusText} ${text}`]);
+        setStatus((prev) => [
+          ...prev,
+          `❌ Backend error: ${response.status} ${response.statusText} ${text}`,
+        ]);
         setGenerating(false);
         return;
       }
 
       const data = await response.json();
-  // savedFiles may now include a speaker label per segment
-  setPodcastFiles(data.savedFiles || []);
-      setPodcastScript(data.script || '');
-      setStatus(prev => [...prev, `✅ Received ${data.savedFiles?.length ?? 0} audio files from backend.`]);
+      // savedFiles may now include a speaker label per segment
+      setPodcastFiles(data.savedFiles || []);
+      setPodcastScript(data.script || "");
+      setStatus((prev) => [
+        ...prev,
+        `✅ Received ${data.savedFiles?.length ?? 0} audio files from backend.`,
+      ]);
     } catch (err) {
-      setStatus(prev => [...prev, `❌ Error submitting segments: ${String(err)}`]);
+      setStatus((prev) => [
+        ...prev,
+        `❌ Error submitting segments: ${String(err)}`,
+      ]);
       console.error(err);
       setGenerating(false);
     } finally {
@@ -332,15 +478,25 @@ export default function PodcastEditor() {
     try {
       const loaded = loadSegmentsFromLocalStorage(LOCALSTORAGE_SEGMENTS_KEY);
       if (!loaded) {
-        setStatus(prev => [...prev, '⚠️ No segments found in localStorage.']);
+        setStatus((prev) => [...prev, "⚠️ No segments found in localStorage."]);
         return;
       }
       // Map into Segment type
-  const mapped: Segment[] = loaded.map((s, idx) => ({ id: String(Date.now()) + '-' + idx, speaker: s.speakerIndex === 0 ? 'Speaker 1' : 'Speaker 2', text: s.text }));
-  setSegments(mapped);
-      setStatus(prev => [...prev, `✅ Imported ${mapped.length} segments from localStorage.`]);
+      const mapped: Segment[] = loaded.map((s, idx) => ({
+        id: String(Date.now()) + "-" + idx,
+        speaker: s.speakerIndex === 0 ? "Speaker 1" : "Speaker 2",
+        text: s.text,
+      }));
+      setSegments(mapped);
+      setStatus((prev) => [
+        ...prev,
+        `✅ Imported ${mapped.length} segments from localStorage.`,
+      ]);
     } catch (e) {
-      setStatus(prev => [...prev, '❌ Failed to import segments from localStorage.']);
+      setStatus((prev) => [
+        ...prev,
+        "❌ Failed to import segments from localStorage.",
+      ]);
     }
   };
 
@@ -349,41 +505,243 @@ export default function PodcastEditor() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as ExportSegment[];
-      if (!Array.isArray(parsed)) throw new Error('Invalid JSON format');
-  const mapped: Segment[] = parsed.map((s, idx) => ({ id: String(Date.now()) + '-' + idx, speaker: s.speakerIndex === 0 ? 'Speaker 1' : 'Speaker 2', text: s.text }));
-  setSegments(mapped);
-      setStatus(prev => [...prev, `✅ Imported ${mapped.length} segments from file: ${file.name}`]);
+      if (!Array.isArray(parsed)) throw new Error("Invalid JSON format");
+      const mapped: Segment[] = parsed.map((s, idx) => ({
+        id: String(Date.now()) + "-" + idx,
+        speaker: s.speakerIndex === 0 ? "Speaker 1" : "Speaker 2",
+        text: s.text,
+      }));
+      setSegments(mapped);
+      setStatus((prev) => [
+        ...prev,
+        `✅ Imported ${mapped.length} segments from file: ${file.name}`,
+      ]);
     } catch (err) {
-      setStatus(prev => [...prev, `❌ Failed to import JSON file: ${String(err)}`]);
+      setStatus((prev) => [
+        ...prev,
+        `❌ Failed to import JSON file: ${String(err)}`,
+      ]);
     }
   };
 
   const exportSegmentsAsJSON = () => {
     try {
-      const exportData: ExportSegment[] = segments.map(s => ({ speakerIndex: s.speaker === 'Speaker 1' ? 0 : 1, text: s.text }));
+      const exportData: ExportSegment[] = segments.map((s) => ({
+        speakerIndex: s.speaker === "Speaker 1" ? 0 : 1,
+        text: s.text,
+      }));
       saveSegmentsToLocalStorage(LOCALSTORAGE_SEGMENTS_KEY, exportData);
-      downloadJSON(exportData, 'podcast-segments.json');
-      setStatus(prev => [...prev, `✅ Exported ${exportData.length} segments to localStorage and downloaded JSON.`]);
+      downloadJSON(exportData, "podcast-segments.json");
+      setStatus((prev) => [
+        ...prev,
+        `✅ Exported ${exportData.length} segments to localStorage and downloaded JSON.`,
+      ]);
     } catch (e) {
-      setStatus(prev => [...prev, '❌ Failed to export segments as JSON.']);
+      setStatus((prev) => [...prev, "❌ Failed to export segments as JSON."]);
     }
   };
 
   return (
     <div className="min-vh-100 container py-5">
       <NavBar />
-      <div className="container shadow p-4 m-auto rounded-md" style={{ backgroundColor: '#e6f7ff', borderRadius: '20px' }}>
+      <div
+        className="container shadow p-4 m-auto rounded-md"
+        style={{ backgroundColor: "#e6f7ff", borderRadius: "20px" }}
+      >
         <h1 className="text-center">Podcast Editor</h1>
-        <p className="text-center small text-muted">Create alternating speaker segments, send to backend to generate audio, and merge locally.</p>
+        <p className="text-center small text-muted">
+          Create alternating speaker segments, send to backend to generate
+          audio, and merge locally.
+        </p>
 
         <form onSubmit={handleSubmit}>
+          <div className="form-group mb-3 text-center">
+            <label className="form-label">Prompt Version</label>
+            <div>
+              <div className="form-check form-check-inline">
+                <input
+                  className="form-check-input"
+                  type="radio"
+                  name="promptVersion"
+                  id="pePromptNew"
+                  checked={promptVersion === 1}
+                  onChange={() => setPromptVersion(1)}
+                />
+                <label className="form-check-label" htmlFor="pePromptNew">
+                  New Prompt
+                </label>
+              </div>
+              <div className="form-check form-check-inline">
+                <input
+                  className="form-check-input"
+                  type="radio"
+                  name="promptVersion"
+                  id="pePromptOld"
+                  checked={promptVersion === 0}
+                  onChange={() => setPromptVersion(0)}
+                />
+                <label className="form-check-label" htmlFor="pePromptOld">
+                  Legacy Prompt
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="form-group mt-3 text-center">
+            <label className="form-label">Voice Assignment</label>
+            <div>
+              <div className="form-check form-check-inline">
+                <input
+                  className="form-check-input"
+                  type="radio"
+                  name="peVoiceMode"
+                  id="peVoiceRandom"
+                  checked={voiceMode === 0}
+                  onChange={() => setVoiceMode(0)}
+                />
+                <label className="form-check-label" htmlFor="peVoiceRandom">
+                  Randomize Voices
+                </label>
+              </div>
+              <div className="form-check form-check-inline">
+                <input
+                  className="form-check-input"
+                  type="radio"
+                  name="peVoiceMode"
+                  id="peVoiceFixed"
+                  checked={voiceMode === 1}
+                  onChange={() => setVoiceMode(1)}
+                />
+                <label className="form-check-label" htmlFor="peVoiceFixed">
+                  Fixed Voices
+                </label>
+              </div>
+
+              {voiceMode === 1 && (
+                <div className="d-flex gap-2 mt-2 align-items-center flex-wrap mx-auto justify-content-center">
+                  <div className="form-group">
+                    <label className="form-label small mb-1">
+                      Speaker 1 Voice
+                    </label>
+                    <select
+                      className="form-select form-select-sm"
+                      value={speaker1Voice}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSpeaker1Voice(v);
+                        if (v === speaker2Voice) {
+                          const other =
+                            AVAILABLE_VOICES.find((x) => x !== v) ||
+                            AVAILABLE_VOICES[0];
+                          setSpeaker2Voice(other);
+                        }
+                      }}
+                    >
+                      <option value="en-US-Chirp3-HD-Sulafat">
+                        en-US-Chirp3-HD-Sulafat
+                      </option>
+                      <option value="en-US-Chirp3-HD-Algenib">
+                        en-US-Chirp3-HD-Algenib
+                      </option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label small mb-1">
+                      Speaker 2 Voice
+                    </label>
+                    <select
+                      className="form-select form-select-sm"
+                      value={speaker2Voice}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSpeaker2Voice(v);
+                        if (v === speaker1Voice) {
+                          const other =
+                            AVAILABLE_VOICES.find((x) => x !== v) ||
+                            AVAILABLE_VOICES[0];
+                          setSpeaker1Voice(other);
+                        }
+                      }}
+                    >
+                      <option value="en-US-Chirp3-HD-Sulafat">
+                        en-US-Chirp3-HD-Sulafat
+                      </option>
+                      <option value="en-US-Chirp3-HD-Algenib">
+                        en-US-Chirp3-HD-Algenib
+                      </option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Prompt Templates Accordion */}
+          <div className="mt-3">
+            <div className="accordion" id="promptTemplatesAccordion">
+              <div className="accordion-item">
+                <h2 className="accordion-header" id="headingNewPrompt">
+                  <button
+                    className="accordion-button collapsed"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#collapseNewPrompt"
+                    aria-expanded="false"
+                    aria-controls="collapseNewPrompt"
+                  >
+                    New Prompt Template
+                  </button>
+                </h2>
+                <div
+                  id="collapseNewPrompt"
+                  className="accordion-collapse collapse"
+                  aria-labelledby="headingNewPrompt"
+                  data-bs-parent="#promptTemplatesAccordion"
+                >
+                  <div className="accordion-body">
+                    <pre style={{ whiteSpace: "pre-wrap" }}>
+                      {newPromptTemplate}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+
+              <div className="accordion-item">
+                <h2 className="accordion-header" id="headingLegacyPrompt">
+                  <button
+                    className="accordion-button collapsed"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#collapseLegacyPrompt"
+                    aria-expanded="false"
+                    aria-controls="collapseLegacyPrompt"
+                  >
+                    Legacy Prompt Template
+                  </button>
+                </h2>
+                <div
+                  id="collapseLegacyPrompt"
+                  className="accordion-collapse collapse"
+                  aria-labelledby="headingLegacyPrompt"
+                  data-bs-parent="#promptTemplatesAccordion"
+                >
+                  <div className="accordion-body">
+                    <pre style={{ whiteSpace: "pre-wrap" }}>
+                      {legacyPromptTemplate}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="mb-3">
             {segments.map((seg, idx) => {
-              const isLeft = seg.speaker === 'Speaker 1';
+              const isLeft = seg.speaker === "Speaker 1";
               const cardStyle: React.CSSProperties = {
-                width: '67%',
+                width: "67%",
                 // remove horizontal stretching
-                maxWidth: '67%',
+                maxWidth: "67%",
                 // inner edge corners square so they appear to meet
                 marginBottom: "8px",
               };
@@ -391,20 +749,44 @@ export default function PodcastEditor() {
               return (
                 <div
                   key={seg.id}
-                  className={`d-flex mb-0 ${isLeft ? 'justify-content-start' : 'justify-content-end'}`}
+                  className={`d-flex mb-0 ${
+                    isLeft ? "justify-content-start" : "justify-content-end"
+                  }`}
                 >
                   <div className="card" style={cardStyle}>
                     <div className="card-body">
                       <div className="d-flex justify-content-between align-items-start mb-2">
                         <div>
-                          <strong>{seg.speaker} — Segment {idx + 1}</strong>
+                          <strong>
+                            {seg.speaker} — Segment {idx + 1}
+                          </strong>
                         </div>
                         <div>
-                          <button type="button" className="btn btn-sm btn-outline-secondary me-1" onClick={() => toggleSpeaker(seg.id)}>Swap</button>
-                          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => removeSegment(seg.id)}>Remove</button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary me-1"
+                            onClick={() => toggleSpeaker(seg.id)}
+                          >
+                            Swap
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() => removeSegment(seg.id)}
+                          >
+                            Remove
+                          </button>
                         </div>
                       </div>
-                      <textarea className="form-control" rows={3} value={seg.text} onChange={(e) => updateSegmentText(seg.id, e.target.value)} placeholder="Enter transcript for this segment" />
+                      <textarea
+                        className="form-control"
+                        rows={3}
+                        value={seg.text}
+                        onChange={(e) =>
+                          updateSegmentText(seg.id, e.target.value)
+                        }
+                        placeholder="Enter transcript for this segment"
+                      />
                     </div>
                   </div>
                 </div>
@@ -413,15 +795,38 @@ export default function PodcastEditor() {
           </div>
 
           <div className="d-flex gap-2 mt-3">
-            <button type="button" className="btn btn-outline-primary" onClick={addSegment} disabled={generating}>+ Add Segment</button>
-            <button type="submit" className="btn btn-success" disabled={generating}>
+            <button
+              type="button"
+              className="btn btn-outline-primary"
+              onClick={addSegment}
+              disabled={generating}
+            >
+              + Add Segment
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline-info"
+              onClick={distributeLines}
+              disabled={generating || segments.length === 0}
+            >
+              🔀 Distribute Lines
+            </button>
+            <button
+              type="submit"
+              className="btn btn-success"
+              disabled={generating}
+            >
               {generating ? (
                 <>
-                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  <span
+                    className="spinner-border spinner-border-sm me-2"
+                    role="status"
+                    aria-hidden="true"
+                  ></span>
                   Generating...
                 </>
               ) : (
-                'Generate Podcast Audio'
+                "Generate Podcast Audio"
               )}
             </button>
           </div>
@@ -436,18 +841,29 @@ export default function PodcastEditor() {
               onClick={() => {
                 // Import from localStorage
                 try {
-                  const stored = localStorage.getItem('podcastScript');
+                  const stored = localStorage.getItem("podcastScript");
                   if (stored) {
                     setPodcastScript(stored);
-                    setStatus(prev => [...prev, '✅ Imported script from localStorage.']);
+                    setStatus((prev) => [
+                      ...prev,
+                      "✅ Imported script from localStorage.",
+                    ]);
                   } else {
-                    setStatus(prev => [...prev, '⚠️ No script found in localStorage.']);
+                    setStatus((prev) => [
+                      ...prev,
+                      "⚠️ No script found in localStorage.",
+                    ]);
                   }
                 } catch (e) {
-                  setStatus(prev => [...prev, '❌ Failed to import from localStorage.']);
+                  setStatus((prev) => [
+                    ...prev,
+                    "❌ Failed to import from localStorage.",
+                  ]);
                 }
               }}
-            >Import from Local</button>
+            >
+              Import from Local
+            </button>
 
             <label className="btn btn-sm btn-outline-secondary mb-0">
               Import from File
@@ -461,9 +877,15 @@ export default function PodcastEditor() {
                   try {
                     const text = await file.text();
                     setPodcastScript(text);
-                    setStatus(prev => [...prev, `✅ Imported script from file: ${file.name}`]);
+                    setStatus((prev) => [
+                      ...prev,
+                      `✅ Imported script from file: ${file.name}`,
+                    ]);
                   } catch (err) {
-                    setStatus(prev => [...prev, `❌ Failed to read file: ${String(err)}`]);
+                    setStatus((prev) => [
+                      ...prev,
+                      `❌ Failed to read file: ${String(err)}`,
+                    ]);
                   }
                 }}
               />
@@ -474,46 +896,71 @@ export default function PodcastEditor() {
               className="btn btn-sm btn-outline-success"
               onClick={() => {
                 try {
-                  localStorage.setItem('podcastScript', podcastScript || '');
-                  const blob = new Blob([podcastScript || ''], { type: 'text/plain' });
+                  localStorage.setItem("podcastScript", podcastScript || "");
+                  const blob = new Blob([podcastScript || ""], {
+                    type: "text/plain",
+                  });
                   const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
+                  const a = document.createElement("a");
                   a.href = url;
-                  a.download = 'podcast-script.txt';
+                  a.download = "podcast-script.txt";
                   document.body.appendChild(a);
                   a.click();
                   a.remove();
                   URL.revokeObjectURL(url);
-                  setStatus(prev => [...prev, '✅ Exported script to localStorage and downloaded.']);
+                  setStatus((prev) => [
+                    ...prev,
+                    "✅ Exported script to localStorage and downloaded.",
+                  ]);
                 } catch (e) {
-                  setStatus(prev => [...prev, '❌ Failed to export script.']);
+                  setStatus((prev) => [...prev, "❌ Failed to export script."]);
                 }
               }}
-            >Export Script</button>
+            >
+              Export Script
+            </button>
 
             <button
               type="button"
               className="btn btn-sm btn-outline-secondary"
               onClick={async () => {
                 try {
-                  await navigator.clipboard.writeText(podcastScript || '');
-                  setStatus(prev => [...prev, '✅ Script copied to clipboard.']);
+                  await navigator.clipboard.writeText(podcastScript || "");
+                  setStatus((prev) => [
+                    ...prev,
+                    "✅ Script copied to clipboard.",
+                  ]);
                 } catch (e) {
-                  setStatus(prev => [...prev, '❌ Failed to copy script to clipboard.']);
+                  setStatus((prev) => [
+                    ...prev,
+                    "❌ Failed to copy script to clipboard.",
+                  ]);
                 }
               }}
-            >Copy Script</button>
+            >
+              Copy Script
+            </button>
           </div>
         </div>
 
         <div className="mt-4">
           <h5>Status</h5>
           <ul className="list-group">
-            {status.map((s, i) => <li key={i} className="list-group-item">{s}</li>)}
+            {status.map((s, i) => (
+              <li key={i} className="list-group-item">
+                {s}
+              </li>
+            ))}
             {generating && (
               <li className="list-group-item d-flex align-items-center">
-                <div className="spinner-border text-primary me-2" role="status" aria-hidden="true" />
-                <div>Generating audio — this can take a minute depending on length.</div>
+                <div
+                  className="spinner-border text-primary me-2"
+                  role="status"
+                  aria-hidden="true"
+                />
+                <div>
+                  Generating audio — this can take a minute depending on length.
+                </div>
               </li>
             )}
           </ul>
@@ -532,11 +979,24 @@ export default function PodcastEditor() {
                 <div key={index} className="col-md-6 mb-3">
                   <div className="card">
                     <div className="card-body">
-                        <h6>Segment {index + 1} {file.speaker ? `— ${file.speaker}` : ''}</h6>
-                        <p className="small text-muted">{file.paragraph}</p>
-                      <audio controls className="w-100" src={`data:audio/mp3;base64,${file.audioData}`} />
+                      <h6>
+                        Segment {index + 1}{" "}
+                        {file.speaker ? `— ${file.speaker}` : ""}
+                      </h6>
+                      <p className="small text-muted">{file.paragraph}</p>
+                      <audio
+                        controls
+                        className="w-100"
+                        src={`data:audio/mp3;base64,${file.audioData}`}
+                      />
                       <div className="mt-2">
-                        <a href={`data:audio/mp3;base64,${file.audioData}`} download={`segment-${index + 1}.mp3`} className="btn btn-sm btn-outline-primary">Download MP3</a>
+                        <a
+                          href={`data:audio/mp3;base64,${file.audioData}`}
+                          download={`segment-${index + 1}.mp3`}
+                          className="btn btn-sm btn-outline-primary"
+                        >
+                          Download MP3
+                        </a>
                       </div>
                     </div>
                   </div>
@@ -549,7 +1009,7 @@ export default function PodcastEditor() {
         {podcastScript && (
           <div className="mt-4">
             <h5>Generated Script</h5>
-            <pre style={{ whiteSpace: 'pre-wrap' }}>{podcastScript}</pre>
+            <pre style={{ whiteSpace: "pre-wrap" }}>{podcastScript}</pre>
           </div>
         )}
       </div>
