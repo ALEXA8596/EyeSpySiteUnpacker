@@ -5,10 +5,10 @@ import Link from 'next/link';
 
 export default function NavBar() {
   return (
-    <nav className="navbar navbar-expand-lg navbar-light" style={{ backgroundColor: 'lightblue' }}> 
+    <nav className="navbar navbar-expand-lg navbar-light mb-3" style={{ backgroundColor: '#e6f7ff' }}> 
       <div className="container">
         <Link href="/" className="navbar-brand">
-          EyeSpy Unpacker
+          <b>EyeSpy Unpacker</b>
         </Link>
         <button className="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
           <span className="navbar-toggler-icon" />
