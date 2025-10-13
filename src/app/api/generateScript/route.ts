@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     `- Present controversial topics with neutrality and show multiple sides where appropriate.\n` +
     `- Avoid sounding like an advertisement. If the source lists events, mention only regularly held events, not one-off occurrences.\n` +
     `- Refine the output: begin with an outline, develop a coherent draft, then add small speech-level edits so the script reads naturally when spoken.\n\n` +
-    `The script will be read by two alternating speakers. Structure the script so that each paragraph represents a block of text to be read by one speaker before switching to the other. Ensure paragraphs are separated by a double newline (\\n\\n). Do not prefix paragraphs with explicit labels such as "Host 1:" or "Host 2:" — the alternation will be inferred by paragraph order.`;
+    `The script will be read by two alternating speakers. Structure the script so that each paragraph represents a block of text to be read by one speaker before switching to the other. Ensure paragraphs are separated by a double newline (\\n\\n). Do not prefix paragraphs with explicit labels such as "Host 1:" or "Host 2:" — the alternation will be inferred by paragraph order. Do not introduce the script with any meta commentary or explanation, directly go into the podcast dialogue.`;
 
   const client = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || "",

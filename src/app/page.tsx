@@ -75,7 +75,7 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
           const audioBuffer = Uint8Array.from(atob(audioData), c => c.charCodeAt(0));
           // Remove any pre-existing file in FFmpeg FS to avoid EEXIST/FS errors
           try {
-            // @ts-ignore - use low-level FS if available
+            // Access low-level FS if available
             if ((ffmpeg as any).FS) {
               try { (ffmpeg as any).FS("unlink", fileName); } catch (e) { /* ignore if not present */ }
             }
@@ -269,16 +269,101 @@ export default function Home() {
   const [podcastFiles, setPodcastFiles] = useState<AudioFiles[]>([]);
 
   const [podcastScript, setPodcastScript] = useState<string>("");
+  
+  type Segment = { id: string; speaker: 'Speaker 1' | 'Speaker 2'; text: string };
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [showScriptEditor, setShowScriptEditor] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
-  // load bootstrap - CSS only (JS disabled to prevent Next.js conflicts)
   useEffect(() => {
     import("bootstrap/dist/js/bootstrap.bundle.min.js" as any);
   }, []);
+
+  // Script editing functions
+  const addSegment = () => {
+    const last = segments[segments.length - 1];
+    const nextSpeaker = last && last.speaker === 'Speaker 1' ? 'Speaker 2' : 'Speaker 1';
+    const newSeg: Segment = { id: String(Date.now()) + Math.random(), speaker: nextSpeaker, text: '' };
+    setSegments(prev => [...prev, newSeg]);
+  };
+
+  const removeSegment = (id: string) => {
+    setSegments(prev => {
+      const updated = prev.filter(s => s.id !== id);
+      // Update the display script whenever segments change
+      const newScript = updated.map(s => s.text).filter(t => t.trim()).join('\n\n');
+      setPodcastScript(newScript);
+      return updated;
+    });
+  };
+
+  const updateSegmentText = (id: string, text: string) => {
+    setSegments(prev => {
+      const updated = prev.map(s => s.id === id ? { ...s, text } : s);
+      // Update the display script whenever segments change
+      const newScript = updated.map(s => s.text).filter(t => t.trim()).join('\n\n');
+      setPodcastScript(newScript);
+      return updated;
+    });
+  };
+
+  const toggleSpeaker = (id: string) => {
+    setSegments(prev => prev.map(s => s.id === id ? { ...s, speaker: s.speaker === 'Speaker 1' ? 'Speaker 2' : 'Speaker 1' } : s));
+  };
+
+  const generateAudioFromScript = async () => {
+    // Validation: remove empty segments and enforce reasonable length
+    const cleaned = segments
+      .map(s => ({ ...s, text: (s.text || '').replace(/\r/g, '') }))
+      .filter(s => s.text.trim().length > 0);
+
+    if (cleaned.length === 0) {
+      setLog(prev => [...prev, '⚠️ Validation failed: please add at least one non-empty segment before generating audio.']);
+      return;
+    }
+
+    // Max length guard (per segment)
+    const tooLong = cleaned.find(s => s.text.length > 10000);
+    if (tooLong) {
+      setLog(prev => [...prev, `⚠️ One of the segments is too long (>10,000 chars). Please shorten it.`]);
+      return;
+    }
+
+    setLog(prev => [...prev, 'Generating audio from edited script...']);
+    setGenerating(true);
+
+    try {
+      const response = await fetch('/api/scriptToAudio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segments: cleaned }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        setLog(prev => [...prev, `❌ Backend error: ${response.status} ${response.statusText} ${text}`]);
+        return;
+      }
+
+      const data = await response.json();
+      setPodcastFiles(data.savedFiles || []);
+      setLog(prev => [...prev, `✅ Generated ${data.savedFiles?.length ?? 0} audio files from edited script.`]);
+    } catch (err) {
+      setLog(prev => [...prev, `❌ Error generating audio: ${String(err)}`]);
+      console.error(err);
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
     setLog(["Starting process for: " + websiteURL]); // Clear previous logs and start new log
+    setShowScriptEditor(false); // Reset script editor
+    setSegments([]); // Clear segments
+    setPodcastFiles([]); // Clear audio files
+    setPodcastScript(""); // Clear script
 
     let scrapedData;
     let pageBodiesLiveCopy;
@@ -379,7 +464,7 @@ export default function Home() {
       console.error("Error during WP excerpt generation:", error);
     }
 
-    // Step 4: Generate Podcast Files
+    // Step 4: Generate Podcast Script
     try {
       setLog((prev) => [...prev, "Generating podcast script..."]);
 
@@ -398,50 +483,40 @@ export default function Home() {
       const scriptData = await scriptResp.json();
       const generatedScript: string = scriptData.script || scriptData.text || '';
       setPodcastScript(generatedScript);
-      setLog((prev) => [...prev, '✅ Script generated.']);
+      setLog((prev) => [...prev, '✅ Script generated. You can now edit it before generating audio.']);
 
-      // 2) Build segments array for TTS. Prefer scriptArray from the server if present.
-      let segmentsForTTS: Array<{ speaker?: string; text: string }> = [];
+      // 2) Parse script into segments for editing
+      let segmentsForEditing: Segment[] = [];
 
       if (Array.isArray(scriptData.scriptArray) && scriptData.scriptArray.length > 0) {
-        segmentsForTTS = scriptData.scriptArray
+        segmentsForEditing = scriptData.scriptArray
           .map((p: any, idx: number) => {
             const speakerRaw = (p.speaker || '').toString().toLowerCase();
             const speaker = speakerRaw.includes('1') ? 'Speaker 1' : 'Speaker 2';
-            return { speaker, text: (p.text || '').toString().replace(/\n/g, ' ').trim() };
+            return { 
+              id: String(Date.now()) + '-' + idx, 
+              speaker: speaker as 'Speaker 1' | 'Speaker 2', 
+              text: (p.text || '').toString().replace(/\n/g, ' ').trim() 
+            };
           })
           .filter((s: any) => s.text && s.text.length > 0);
       } else if (generatedScript) {
         // Fallback: split by double newline and alternate speakers
         const paragraphs = generatedScript.split('\n\n').map((p) => p.replace(/\n/g, ' ').trim()).filter((p) => p.length > 0);
-        segmentsForTTS = paragraphs.map((text, idx) => ({ speaker: idx % 2 === 0 ? 'Speaker 1' : 'Speaker 2', text }));
+        segmentsForEditing = paragraphs.map((text, idx) => ({ 
+          id: String(Date.now()) + '-' + idx, 
+          speaker: idx % 2 === 0 ? 'Speaker 1' : 'Speaker 2' as 'Speaker 1' | 'Speaker 2', 
+          text 
+        }));
       }
 
-      if (segmentsForTTS.length === 0) {
-        setLog((prev) => [...prev, '⚠️ No script segments available for TTS.']);
-        return;
-      }
+      setSegments(segmentsForEditing);
+      setShowScriptEditor(true);
+      setLog((prev) => [...prev, `Script parsed into ${segmentsForEditing.length} editable segments.`]);
 
-      setLog((prev) => [...prev, `Generating ${segmentsForTTS.length} audio segments from script...`]);
-
-      const ttsResp = await fetch('/api/scriptToAudio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segments: segmentsForTTS }),
-      });
-
-      if (!ttsResp.ok) {
-        const text = await ttsResp.text();
-        setLog((prev) => [...prev, `❌ Error generating TTS: ${ttsResp.status} ${ttsResp.statusText} ${text}`]);
-        throw new Error('Network response was not ok (scriptToAudio)');
-      }
-
-      const ttsData = await ttsResp.json();
-      setPodcastFiles(ttsData.savedFiles || []);
-      setLog((prev) => [...prev, `✅ Generated ${ttsData.savedFiles?.length ?? 0} audio segments.`]);
     } catch (error) {
-      setLog((prev) => [...prev, `❌ Error during podcast generation: ${String(error)}`]);
-      console.error('Error during podcast generation:', error);
+      setLog((prev) => [...prev, `❌ Error during script generation: ${String(error)}`]);
+      console.error('Error during script generation:', error);
     }
   };
 
@@ -503,7 +578,7 @@ export default function Home() {
         </div>
       </div>
 
-            <div
+      <div
         className="container shadow p-4 my-2 m-auto rounded-md"
         style={{
           backgroundColor: "#e6f7ff",
@@ -512,154 +587,249 @@ export default function Home() {
         }}
       >
         <h3>Generated Content</h3>
-        {/* Yoast Description */}
+        {/* Yoast Description (collapsible) */}
         <div className="mb-3">
-          <h4>Yoast Description</h4>
-          <p>{yoastDescription || "No description available."}</p>
-        </div>
-        {/* WP Excerpt */}
-        <div className="mb-3">
-          <h4>WP Excerpt</h4>
-          <p>{wpExcerpt || "No excerpt available."}</p>
-        </div>
-        
-        {/* Podcast Script */}
-        <div className="mb-3">
-          <h4>Podcast Script</h4>
-          <pre className="text-wrap">{podcastScript || "No script available."}</pre>
-          <div className="mt-2 d-flex gap-2 align-items-center">
-            <button
-              className="btn btn-sm btn-outline-primary"
-              onClick={() => {
-                // save to localStorage and download script as text
-                try {
-                  const key = 'podcastScript';
-                  localStorage.setItem(key, podcastScript || '');
-                  const blob = new Blob([podcastScript || ''], { type: 'text/plain' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = 'podcast-script.txt';
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                  URL.revokeObjectURL(url);
-                  setLog((prev) => [...prev, '✅ Script exported to localStorage and downloaded.']);
-                } catch (e) {
-                  setLog((prev) => [...prev, '❌ Failed to export script.']);
-                }
-              }}
-              disabled={!podcastScript}
-            >
-              Export Script
-            </button>
-
-            <button
-              className="btn btn-sm btn-outline-secondary"
-              onClick={async () => {
-                if (!podcastScript) return;
-                try {
-                  await navigator.clipboard.writeText(podcastScript || '');
-                  setLog((prev) => [...prev, '✅ Script copied to clipboard.']);
-                } catch (e) {
-                  setLog((prev) => [...prev, '❌ Failed to copy script to clipboard.']);
-                }
-              }}
-              disabled={!podcastScript}
-            >
-              Copy Script
-            </button>
-
-            {/* Segment JSON export/import symmetry */}
-            <button
-              className="btn btn-sm btn-outline-info"
-              onClick={() => {
-                // Export segments derived from the generated script
-                if (!podcastScript) {
-                  setLog((prev) => [...prev, '⚠️ No script available to export as segments.']);
-                  return;
-                }
-                try {
-                  const paragraphs = podcastScript.split('\n\n').map(p => p.replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
-                  const exportData: ExportSegment[] = paragraphs.map((text, idx) => ({ speakerIndex: idx % 2 === 0 ? 0 : 1, text }));
-                  saveSegmentsToLocalStorage(LOCALSTORAGE_SEGMENTS_KEY, exportData);
-                  downloadJSON(exportData, 'podcast-segments.json');
-                  setLog((prev) => [...prev, `✅ Exported ${exportData.length} segments as JSON.`]);
-                } catch (e) {
-                  setLog((prev) => [...prev, '❌ Failed to export segments as JSON.']);
-                }
-              }}
-              disabled={!podcastScript}
-            >
-              Export Segments (JSON)
-            </button>
-
-            {/* <button
-              className="btn btn-sm btn-outline-dark"
-              onClick={async () => {
-                // Import segments from localStorage and synthesize audio
-                try {
-                  const loaded = loadSegmentsFromLocalStorage(LOCALSTORAGE_SEGMENTS_KEY);
-                  if (!loaded || loaded.length === 0) {
-                    setLog((prev) => [...prev, '⚠️ No segments found in localStorage.']);
-                    return;
-                  }
-                  setLog((prev) => [...prev, `Importing ${loaded.length} segments from localStorage and generating audio...`]);
-                  const segmentsForTTS = loaded.map(s => ({ speaker: s.speakerIndex === 0 ? 'Speaker 1' : 'Speaker 2', text: s.text }));
-                  const ttsResp = await fetch('/api/scriptToAudio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segments: segmentsForTTS }) });
-                  if (!ttsResp.ok) {
-                    const text = await ttsResp.text();
-                    setLog((prev) => [...prev, `❌ Error generating TTS from imported segments: ${ttsResp.status} ${ttsResp.statusText} ${text}`]);
-                    return;
-                  }
-                  const ttsData = await ttsResp.json();
-                  setPodcastFiles(ttsData.savedFiles || []);
-                  // Rebuild script from imported segments
-                  const rebuiltScript = loaded.map(s => s.text).join('\n\n');
-                  setPodcastScript(rebuiltScript);
-                  setLog((prev) => [...prev, `✅ Imported segments and generated ${ttsData.savedFiles?.length ?? 0} audio files.`]);
-                } catch (e) {
-                  setLog((prev) => [...prev, `❌ Failed to import segments from localStorage: ${String(e)}`]);
-                }
-              }}
-            >
-              Import Segments (Local)
-            </button> */}
-
-            {/* <label className="btn btn-sm btn-outline-secondary mb-0">
-              Import Segments (File)
-              <input
-                type="file"
-                accept="application/json"
-                hidden
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  try {
-                    const text = await file.text();
-                    const parsed = JSON.parse(text) as ExportSegment[];
-                    if (!Array.isArray(parsed)) throw new Error('Invalid JSON format');
-                    setLog((prev) => [...prev, `Importing ${parsed.length} segments from file and generating audio...`]);
-                    const segmentsForTTS = parsed.map(s => ({ speaker: s.speakerIndex === 0 ? 'Speaker 1' : 'Speaker 2', text: s.text }));
-                    const ttsResp = await fetch('/api/scriptToAudio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segments: segmentsForTTS }) });
-                    if (!ttsResp.ok) {
-                      const txt = await ttsResp.text();
-                      setLog((prev) => [...prev, `❌ Error generating TTS from imported file: ${ttsResp.status} ${ttsResp.statusText} ${txt}`]);
-                      return;
-                    }
-                    const ttsData = await ttsResp.json();
-                    setPodcastFiles(ttsData.savedFiles || []);
-                    const rebuiltScript = parsed.map(s => s.text).join('\n\n');
-                    setPodcastScript(rebuiltScript);
-                    setLog((prev) => [...prev, `✅ Imported segments from file and generated ${ttsData.savedFiles?.length ?? 0} audio files.`]);
-                  } catch (err) {
-                    setLog((prev) => [...prev, `❌ Failed to import segments from file: ${String(err)}`]);
-                  }
-                }}
-              />
-            </label> */}
+          <div className="accordion" id="yoastAccordion">
+            <div className="accordion-item">
+              <h2 className="accordion-header" id="headingYoast">
+                <button
+                  className="accordion-button collapsed"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapseYoast"
+                  aria-expanded="false"
+                  aria-controls="collapseYoast"
+                >
+                  Yoast Description
+                </button>
+              </h2>
+              <div
+                id="collapseYoast"
+                className="accordion-collapse collapse"
+                aria-labelledby="headingYoast"
+                data-bs-parent="#yoastAccordion"
+              >
+                <div className="accordion-body">
+                  <p>{yoastDescription || "No description available."}</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+        {/* WP Excerpt (collapsible) */}
+        <div className="mb-3">
+          <div className="accordion" id="wpExcerptAccordion">
+            <div className="accordion-item">
+              <h2 className="accordion-header" id="headingWpExcerpt">
+                <button
+                  className="accordion-button collapsed"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapseWpExcerpt"
+                  aria-expanded="false"
+                  aria-controls="collapseWpExcerpt"
+                >
+                  WP Excerpt
+                </button>
+              </h2>
+              <div
+                id="collapseWpExcerpt"
+                className="accordion-collapse collapse"
+                aria-labelledby="headingWpExcerpt"
+                data-bs-parent="#wpExcerptAccordion"
+              >
+                <div className="accordion-body">
+                  <p>{wpExcerpt || "No excerpt available."}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {/* Podcast Script (collapsible, styled like podcast-editor) */}
+        <div className="mb-3">
+          <div className="accordion" id="podcastScriptAccordion">
+            <div className="accordion-item">
+              <h2 className="accordion-header" id="headingPodcastScript">
+                <button
+                  className="accordion-button collapsed"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapsePodcastScript"
+                  aria-expanded="false"
+                  aria-controls="collapsePodcastScript"
+                >
+                  Podcast Script
+                </button>
+              </h2>
+              <div
+                id="collapsePodcastScript"
+                className="accordion-collapse collapse"
+                aria-labelledby="headingPodcastScript"
+                data-bs-parent="#podcastScriptAccordion"
+              >
+                <div className="accordion-body p-0">
+                  <div className="card">
+                    <div className="card-body">
+                      <div className="p-3 bg-light rounded" style={{ minHeight: 120 }}>
+                        <div className="mb-0" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {podcastScript || 'No script available.'}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 d-flex gap-2 align-items-center flex-wrap">
+                        <button
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => {
+                            try {
+                              const key = 'podcastScript';
+                              localStorage.setItem(key, podcastScript || '');
+                              const blob = new Blob([podcastScript || ''], { type: 'text/plain' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = 'podcast-script.txt';
+                              document.body.appendChild(a);
+                              a.click();
+                              a.remove();
+                              URL.revokeObjectURL(url);
+                              setLog((prev) => [...prev, '✅ Script exported to localStorage and downloaded.']);
+                            } catch (e) {
+                              setLog((prev) => [...prev, '❌ Failed to export script.']);
+                            }
+                          }}
+                          disabled={!podcastScript}
+                        >
+                          Export Script
+                        </button>
+
+                        <button
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={async () => {
+                            if (!podcastScript) return;
+                            try {
+                              await navigator.clipboard.writeText(podcastScript || '');
+                              setLog((prev) => [...prev, '✅ Script copied to clipboard.']);
+                            } catch (e) {
+                              setLog((prev) => [...prev, '❌ Failed to copy script to clipboard.']);
+                            }
+                          }}
+                          disabled={!podcastScript}
+                        >
+                          Copy Script
+                        </button>
+
+                        <button
+                          className="btn btn-sm btn-outline-info"
+                          onClick={() => {
+                            if (!podcastScript) {
+                              setLog((prev) => [...prev, '⚠️ No script available to export as segments.']);
+                              return;
+                            }
+                            try {
+                              const paragraphs = podcastScript.split('\n\n').map(p => p.replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+                              const exportData: ExportSegment[] = paragraphs.map((text, idx) => ({ speakerIndex: idx % 2 === 0 ? 0 : 1, text }));
+                              saveSegmentsToLocalStorage(LOCALSTORAGE_SEGMENTS_KEY, exportData);
+                              downloadJSON(exportData, 'podcast-segments.json');
+                              setLog((prev) => [...prev, `✅ Exported ${exportData.length} segments as JSON.`]);
+                            } catch (e) {
+                              setLog((prev) => [...prev, '❌ Failed to export segments as JSON.']);
+                            }
+                          }}
+                          disabled={!podcastScript}
+                        >
+                          Export Segments (JSON)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Script Editor */}
+        {showScriptEditor && (
+          <div className="mb-3">
+            <div className="d-flex justify-content-between align-items-center mb-3">
+              <h4>Edit Podcast Script</h4>
+              <button 
+                className="btn btn-sm btn-outline-secondary"
+                onClick={() => setShowScriptEditor(false)}
+              >
+                Hide Editor
+              </button>
+            </div>
+            <p className="text-muted">Edit the script segments below before generating audio. Each segment represents a block of dialog from one speaker.</p>
+            
+            <div className="row">
+              <div className="col-12">
+                <div className="mb-3 d-flex gap-2 align-items-center flex-wrap">
+                  <button 
+                    className="btn btn-success" 
+                    onClick={generateAudioFromScript} 
+                    disabled={generating || segments.length === 0}
+                  >
+                    {generating ? '🔄 Generating Audio...' : '🎤 Generate Audio from Script'}
+                  </button>
+                  <button 
+                    className="btn btn-outline-secondary" 
+                    onClick={addSegment}
+                  >
+                    ➕ Add Segment
+                  </button>
+                  <span className="small text-muted">
+                    {segments.length} segment{segments.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                {segments.map((seg, idx) => {
+                  const isLeft = seg.speaker === 'Speaker 1';
+                  const cardStyle: React.CSSProperties = {
+                    width: '67%',
+                    maxWidth: '67%',
+                    marginBottom: '8px',
+                  };
+
+                  return (
+                    <div
+                      key={seg.id}
+                      className={`d-flex mb-0 ${isLeft ? 'justify-content-start' : 'justify-content-end'}`}
+                    >
+                      <div className="card" style={cardStyle}>
+                        <div className="card-body">
+                          <div className="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                              <strong>{seg.speaker} — Segment {idx + 1}</strong>
+                            </div>
+                            <div>
+                              <button type="button" className="btn btn-sm btn-outline-secondary me-1" onClick={() => toggleSpeaker(seg.id)}>Swap</button>
+                              <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => removeSegment(seg.id)}>Remove</button>
+                            </div>
+                          </div>
+                          <textarea className="form-control" rows={3} value={seg.text} onChange={(e) => updateSegmentText(seg.id, e.target.value)} placeholder="Enter transcript for this segment" />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Show Editor Button */}
+        {!showScriptEditor && podcastScript && (
+          <div className="mb-3">
+            <button 
+              className="btn btn-outline-primary"
+              onClick={() => setShowScriptEditor(true)}
+            >
+              ✏️ Edit Script Before Generating Audio
+            </button>
+          </div>
+        )}
         
         {/* Audio Files */}
         {podcastFiles.length > 0 && (
