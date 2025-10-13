@@ -295,11 +295,6 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
   );
 }
 
-// Prompt templates (display-only)
-const newPromptTemplate = `Generate a podcast-style audio overview script based on the provided content for "{organizationName}". The output should be a conversational script between two AI hosts discussing the main points, insights, and implications of the input material. Do not include a separate title line; begin directly with the script content. Do not give the podcast a name. Just start talking about the subject.\n\nContext and contact details (use where helpful, but do not read lists verbatim):\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\n\nINSERTBODIESHERE\n\nPodcast Format:... (truncated for UI)`;
-
-const legacyPromptTemplate = `You are an expert script writer. Create a script for an audio overview of the organization "{organizationName}". The script should be informative and conversational. Do not introduce the script with a title. The audience is primarily low vision or blind people. Appropriately use the following details:\n\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\nINSERTBODIESHERE\n\nIf applicable, give a list and description of the services and the events that the organization offers. Do not sound like an advertisement... (truncated for UI)`;
-
 export default function PodcastEditor() {
   // Segment represents a block of dialog from a speaker
   type Segment = {
@@ -319,7 +314,6 @@ export default function PodcastEditor() {
   const [podcastFiles, setPodcastFiles] = useState<AudioFiles[]>([]);
   const [podcastScript, setPodcastScript] = useState<string>("");
   const [generating, setGenerating] = useState(false);
-  const [promptVersion, setPromptVersion] = useState<number>(1); // 0 = legacy, 1 = new
   const [voiceMode, setVoiceMode] = useState<number>(0); // 0 = randomize, 1 = fixed
   const [speaker1Voice, setSpeaker1Voice] = useState<string>(
     "en-US-Chirp3-HD-Sulafat"
@@ -554,37 +548,6 @@ export default function PodcastEditor() {
         </p>
 
         <form onSubmit={handleSubmit}>
-          <div className="form-group mb-3 text-center">
-            <label className="form-label">Prompt Version</label>
-            <div>
-              <div className="form-check form-check-inline">
-                <input
-                  className="form-check-input"
-                  type="radio"
-                  name="promptVersion"
-                  id="pePromptNew"
-                  checked={promptVersion === 1}
-                  onChange={() => setPromptVersion(1)}
-                />
-                <label className="form-check-label" htmlFor="pePromptNew">
-                  New Prompt
-                </label>
-              </div>
-              <div className="form-check form-check-inline">
-                <input
-                  className="form-check-input"
-                  type="radio"
-                  name="promptVersion"
-                  id="pePromptOld"
-                  checked={promptVersion === 0}
-                  onChange={() => setPromptVersion(0)}
-                />
-                <label className="form-check-label" htmlFor="pePromptOld">
-                  Legacy Prompt
-                </label>
-              </div>
-            </div>
-          </div>
 
           <div className="form-group mt-3 text-center">
             <label className="form-label">Voice Assignment</label>
@@ -672,65 +635,6 @@ export default function PodcastEditor() {
                   </div>
                 </div>
               )}
-            </div>
-          </div>
-
-          {/* Prompt Templates Accordion */}
-          <div className="my-3">
-            <div className="accordion" id="promptTemplatesAccordion">
-              <div className="accordion-item">
-                <h2 className="accordion-header" id="headingNewPrompt">
-                  <button
-                    className="accordion-button collapsed"
-                    type="button"
-                    data-bs-toggle="collapse"
-                    data-bs-target="#collapseNewPrompt"
-                    aria-expanded="false"
-                    aria-controls="collapseNewPrompt"
-                  >
-                    New Prompt Template
-                  </button>
-                </h2>
-                <div
-                  id="collapseNewPrompt"
-                  className="accordion-collapse collapse"
-                  aria-labelledby="headingNewPrompt"
-                  data-bs-parent="#promptTemplatesAccordion"
-                >
-                  <div className="accordion-body">
-                    <pre style={{ whiteSpace: "pre-wrap" }}>
-                      {newPromptTemplate}
-                    </pre>
-                  </div>
-                </div>
-              </div>
-
-              <div className="accordion-item">
-                <h2 className="accordion-header" id="headingLegacyPrompt">
-                  <button
-                    className="accordion-button collapsed"
-                    type="button"
-                    data-bs-toggle="collapse"
-                    data-bs-target="#collapseLegacyPrompt"
-                    aria-expanded="false"
-                    aria-controls="collapseLegacyPrompt"
-                  >
-                    Legacy Prompt Template
-                  </button>
-                </h2>
-                <div
-                  id="collapseLegacyPrompt"
-                  className="accordion-collapse collapse"
-                  aria-labelledby="headingLegacyPrompt"
-                  data-bs-parent="#promptTemplatesAccordion"
-                >
-                  <div className="accordion-body">
-                    <pre style={{ whiteSpace: "pre-wrap" }}>
-                      {legacyPromptTemplate}
-                    </pre>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
 
