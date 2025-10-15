@@ -274,20 +274,9 @@ export default function Home() {
   const [voiceMode, setVoiceMode] = useState<number>(0); // 0 = randomize, 1 = fixed
   const [speaker1Voice, setSpeaker1Voice] = useState<string>('en-US-Chirp3-HD-Sulafat');
   const [speaker2Voice, setSpeaker2Voice] = useState<string>('en-US-Chirp3-HD-Algenib');
-  const AVAILABLE_VOICES = ['en-US-Chirp3-HD-Sulafat', 'en-US-Chirp3-HD-Algenib'];
+  // const AVAILABLE_VOICES = ['en-US-Chirp3-HD-Sulafat', 'en-US-Chirp3-HD-Algenib'];
   const [generateYoast, setGenerateYoast] = useState<boolean>(true);
   const [generateWpExcerpt, setGenerateWpExcerpt] = useState<boolean>(true);
-
-  // Ensure voices are distinct when switching to fixed mode or when one changes
-  useEffect(() => {
-    if (voiceMode === 1) {
-      if (speaker1Voice === speaker2Voice) {
-        const other = AVAILABLE_VOICES.find(v => v !== speaker1Voice) || AVAILABLE_VOICES[0];
-        setSpeaker2Voice(other);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voiceMode]);
 
   // Prompt templates (display-only)
   const newPromptTemplate = `Generate a podcast-style audio overview script based on the provided content for "{organizationName}". The output should be a conversational script between two AI hosts discussing the main points, insights, and implications of the input material. Do not include a separate title line; begin directly with the script content. Do not give the podcast a name. Just start talking about the subject.\n\nContext and contact details (use where helpful, but do not read lists verbatim):\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\n\nINSERTBODIESHERE\n\nPodcast Format:... (truncated for UI)`;
@@ -652,11 +641,6 @@ export default function Home() {
                             <select className="form-select form-select-sm" value={speaker1Voice} onChange={(e) => {
                                 const v = e.target.value;
                                 setSpeaker1Voice(v);
-                                // if equal, pick opposite
-                                if (v === speaker2Voice) {
-                                  const other = AVAILABLE_VOICES.find(x => x !== v) || AVAILABLE_VOICES[0];
-                                  setSpeaker2Voice(other);
-                                }
                               }}>
                                 <option value="en-US-Chirp3-HD-Sulafat">en-US-Chirp3-HD-Sulafat</option>
                                 <option value="en-US-Chirp3-HD-Algenib">en-US-Chirp3-HD-Algenib</option>
@@ -667,10 +651,6 @@ export default function Home() {
                             <select className="form-select form-select-sm" value={speaker2Voice} onChange={(e) => {
                                 const v = e.target.value;
                                 setSpeaker2Voice(v);
-                                if (v === speaker1Voice) {
-                                  const other = AVAILABLE_VOICES.find(x => x !== v) || AVAILABLE_VOICES[0];
-                                  setSpeaker1Voice(other);
-                                }
                               }}>
                               <option value="en-US-Chirp3-HD-Sulafat">en-US-Chirp3-HD-Sulafat</option>
                               <option value="en-US-Chirp3-HD-Algenib">en-US-Chirp3-HD-Algenib</option>
