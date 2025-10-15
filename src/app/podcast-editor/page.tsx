@@ -482,29 +482,72 @@ export default function PodcastEditor() {
     }
   };
 
+  // Enhanced import handler: supports .json (ExportSegment[]) and .txt files
   const handleImportFile = async (file: File | null) => {
     if (!file) return;
+    const name = file.name || 'uploaded-file';
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as ExportSegment[];
-      if (!Array.isArray(parsed)) throw new Error("Invalid JSON format");
-      const mapped: Segment[] = parsed.map((s, idx) => ({
-        id: String(Date.now()) + "-" + idx,
-        speaker: s.speakerIndex === 0 ? "Speaker 1" : "Speaker 2",
-        text: s.text,
-      }));
-      setSegments(mapped);
-      setStatus((prev) => [
-        ...prev,
-        `✅ Imported ${mapped.length} segments from file: ${file.name}`,
-      ]);
+
+      // Try JSON first
+      try {
+        const parsed = JSON.parse(text) as ExportSegment[];
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].text !== undefined) {
+          const mapped: Segment[] = parsed.map((s, idx) => ({
+            id: String(Date.now()) + '-' + idx,
+            speaker: s.speakerIndex === 0 ? 'Speaker 1' : 'Speaker 2',
+            text: s.text,
+          }));
+          setSegments(mapped);
+          setStatus((prev) => [...prev, `✅ Imported ${mapped.length} segments from JSON file: ${name}`]);
+          return;
+        }
+      } catch (jsonErr) {
+        // Not JSON — fallthrough to treat as plain text
+      }
+
+      // Plain text: detect separator and split into paragraphs
+      // Common separators: double newline, lines starting with dashes, or numbered lists
+      let paragraphs: string[] = [];
+
+      // If double-newline present, use that
+      if (/\n\s*\n/.test(text)) {
+        paragraphs = text.split(/\n\s*\n/).map(p => p.replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+      } else if (/^\d+\./m.test(text)) {
+        // numbered list
+        paragraphs = text.split(/\n\d+\./).map(p => p.replace(/^\d+\./, '').replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+      } else if (/^[-*]\s+/m.test(text)) {
+        // bullet list
+        paragraphs = text.split(/\n[-*]\s+/).map(p => p.replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+      } else {
+        // Fallback: split by punctuation followed by newline or just by sentences of reasonable length
+        paragraphs = text.split(/\n/).map(p => p.trim()).filter(p => p.length > 0);
+      }
+
+      // Heuristic: if paragraphs include speaker labels like 'Speaker 1:' or 'S1:' or 'Host:' then respect labels
+      const labelRegex = /^(?:Speaker\s*1|Speaker\s*2|S1|S2|Host\s*1|Host\s*2|Host):\s*/i;
+      const mappedSegments: Segment[] = [];
+      for (let i = 0; i < paragraphs.length; i++) {
+        let p = paragraphs[i];
+        let speaker: 'Speaker 1' | 'Speaker 2' = i % 2 === 0 ? 'Speaker 1' : 'Speaker 2';
+        const m = p.match(labelRegex);
+        if (m) {
+          const label = m[0];
+          p = p.replace(labelRegex, '').trim();
+          if (/1|s1|host\s*1/i.test(label)) speaker = 'Speaker 1';
+          else speaker = 'Speaker 2';
+        }
+        mappedSegments.push({ id: String(Date.now()) + '-' + i, speaker, text: p });
+      }
+
+      setSegments(mappedSegments);
+      setStatus((prev) => [...prev, `✅ Imported ${mappedSegments.length} segments from text file: ${name}`]);
     } catch (err) {
-      setStatus((prev) => [
-        ...prev,
-        `❌ Failed to import JSON file: ${String(err)}`,
-      ]);
+      setStatus((prev) => [...prev, `❌ Failed to import file: ${String(err)}`]);
     }
   };
+
+  
 
   const exportSegmentsAsJSON = () => {
     try {
@@ -537,9 +580,9 @@ export default function PodcastEditor() {
 
         <form onSubmit={handleSubmit}>
 
-          <div className="form-group mt-3 text-center">
+          <div className="form-group my-3 text-center">
             <label className="form-label">Voice Assignment</label>
-            <div>
+            <div className="d-flex justify-content-center gap-3 align-items-center">
               <div className="form-check form-check-inline">
                 <input
                   className="form-check-input"
@@ -550,7 +593,7 @@ export default function PodcastEditor() {
                   onChange={() => setVoiceMode(0)}
                 />
                 <label className="form-check-label" htmlFor="peVoiceRandom">
-                  Randomize Voices
+                  Randomize
                 </label>
               </div>
               <div className="form-check form-check-inline">
@@ -563,88 +606,70 @@ export default function PodcastEditor() {
                   onChange={() => setVoiceMode(1)}
                 />
                 <label className="form-check-label" htmlFor="peVoiceFixed">
-                  Fixed Voices
+                  Fixed
                 </label>
               </div>
-
-              {voiceMode === 1 && (
-                <div className="d-flex gap-2 mt-2 align-items-center flex-wrap mx-auto justify-content-center">
-                  <div className="form-group">
-                    <label className="form-label small mb-1">
-                      Speaker 1 Voice
-                    </label>
-                    <select
-                      className="form-select form-select-sm"
-                      value={speaker1Voice}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setSpeaker1Voice(v);
-                        if (v === speaker2Voice) {
-                          const other =
-                            AVAILABLE_VOICES.find((x) => x !== v) ||
-                            AVAILABLE_VOICES[0];
-                          setSpeaker2Voice(other);
-                        }
-                      }}
-                    >
-                      <option value="en-US-Chirp3-HD-Sulafat">
-                        en-US-Chirp3-HD-Sulafat
-                      </option>
-                      <option value="en-US-Chirp3-HD-Algenib">
-                        en-US-Chirp3-HD-Algenib
-                      </option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label small mb-1">
-                      Speaker 2 Voice
-                    </label>
-                    <select
-                      className="form-select form-select-sm"
-                      value={speaker2Voice}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setSpeaker2Voice(v);
-                        if (v === speaker1Voice) {
-                          const other =
-                            AVAILABLE_VOICES.find((x) => x !== v) ||
-                            AVAILABLE_VOICES[0];
-                          setSpeaker1Voice(other);
-                        }
-                      }}
-                    >
-                      <option value="en-US-Chirp3-HD-Sulafat">
-                        en-US-Chirp3-HD-Sulafat
-                      </option>
-                      <option value="en-US-Chirp3-HD-Algenib">
-                        en-US-Chirp3-HD-Algenib
-                      </option>
-                    </select>
-                  </div>
-                </div>
-              )}
             </div>
-          </div>
 
-          <div className="d-flex gap-2 my-3 justify-content-center flex-wrap">
-            <button
-              type="submit"
-              className="btn btn-success"
-              disabled={generating}
-            >
-              {generating ? (
-                <>
-                  <span
-                    className="spinner-border spinner-border-sm me-2"
-                    role="status"
-                    aria-hidden="true"
-                  ></span>
-                  Generating...
-                </>
-              ) : (
-                "Generate Podcast Audio"
-              )}
-            </button>
+            {voiceMode === 1 && (
+              <div className="d-flex justify-content-center gap-2 mt-2">
+                <select className="form-select form-select-sm" value={speaker1Voice} onChange={(e) => setSpeaker1Voice(e.target.value)}>
+                  {AVAILABLE_VOICES.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+                <select className="form-select form-select-sm" value={speaker2Voice} onChange={(e) => setSpeaker2Voice(e.target.value)}>
+                  {AVAILABLE_VOICES.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="mt-3">
+              <h5>Import / Export Script</h5>
+              <div className="d-flex gap-2 justify-content-center">
+                <button type="button" className="btn btn-sm btn-outline-primary" onClick={importSegmentsFromLocal}>
+                  Import Segments from Local
+                </button>
+
+                <label className="btn btn-sm btn-outline-secondary mb-0">
+                  Import from File
+                  <input
+                    type="file"
+                    accept=".txt,.json"
+                    hidden
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      void handleImportFile(file);
+                    }}
+                  />
+                </label>
+
+                <button type="button" className="btn btn-sm btn-outline-success" onClick={exportSegmentsAsJSON}>
+                  Export Segments (JSON)
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(podcastScript || "");
+                      setStatus((prev) => [...prev, "✅ Script copied to clipboard."]);
+                    } catch (e) {
+                      setStatus((prev) => [...prev, "❌ Failed to copy script to clipboard."]);
+                    }
+                  }}
+                >
+                  Copy Script
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="mb-3">
@@ -652,9 +677,7 @@ export default function PodcastEditor() {
               const isLeft = seg.speaker === "Speaker 1";
               const cardStyle: React.CSSProperties = {
                 width: "67%",
-                // remove horizontal stretching
                 maxWidth: "67%",
-                // inner edge corners square so they appear to meet
                 marginBottom: "8px",
               };
 
@@ -674,29 +697,20 @@ export default function PodcastEditor() {
                           </strong>
                         </div>
                         <div>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-secondary me-1"
-                            onClick={() => toggleSpeaker(seg.id)}
-                          >
+                          <button type="button" className="btn btn-sm btn-outline-secondary me-1" onClick={() => toggleSpeaker(seg.id)}>
                             Swap
                           </button>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-danger"
-                            onClick={() => removeSegment(seg.id)}
-                          >
+                          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => removeSegment(seg.id)}>
                             Remove
                           </button>
                         </div>
                       </div>
+
                       <textarea
                         className="form-control"
                         rows={3}
                         value={seg.text}
-                        onChange={(e) =>
-                          updateSegmentText(seg.id, e.target.value)
-                        }
+                        onChange={(e) => updateSegmentText(seg.id, e.target.value)}
                         placeholder="Enter transcript for this segment"
                       />
                     </div>
@@ -707,34 +721,16 @@ export default function PodcastEditor() {
           </div>
 
           <div className="d-flex gap-2 mt-3">
-            <button
-              type="button"
-              className="btn btn-outline-primary"
-              onClick={addSegment}
-              disabled={generating}
-            >
+            <button type="button" className="btn btn-outline-primary" onClick={addSegment} disabled={generating}>
               + Add Segment
             </button>
-            <button
-              type="button"
-              className="btn btn-outline-info"
-              onClick={distributeLines}
-              disabled={generating || segments.length === 0}
-            >
+            <button type="button" className="btn btn-outline-info" onClick={distributeLines} disabled={generating || segments.length === 0}>
               🔀 Distribute Lines
             </button>
-            <button
-              type="submit"
-              className="btn btn-success"
-              disabled={generating}
-            >
+            <button type="submit" className="btn btn-success" disabled={generating}>
               {generating ? (
                 <>
-                  <span
-                    className="spinner-border spinner-border-sm me-2"
-                    role="status"
-                    aria-hidden="true"
-                  ></span>
+                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                   Generating...
                 </>
               ) : (
@@ -743,117 +739,6 @@ export default function PodcastEditor() {
             </button>
           </div>
         </form>
-
-        <div className="mt-3">
-          <h5>Import / Export Script</h5>
-          <div className="d-flex gap-2">
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-primary"
-              onClick={() => {
-                // Import from localStorage
-                try {
-                  const stored = localStorage.getItem("podcastScript");
-                  if (stored) {
-                    setPodcastScript(stored);
-                    setStatus((prev) => [
-                      ...prev,
-                      "✅ Imported script from localStorage.",
-                    ]);
-                  } else {
-                    setStatus((prev) => [
-                      ...prev,
-                      "⚠️ No script found in localStorage.",
-                    ]);
-                  }
-                } catch (e) {
-                  setStatus((prev) => [
-                    ...prev,
-                    "❌ Failed to import from localStorage.",
-                  ]);
-                }
-              }}
-            >
-              Import from Local
-            </button>
-
-            <label className="btn btn-sm btn-outline-secondary mb-0">
-              Import from File
-              <input
-                type="file"
-                accept=".txt"
-                hidden
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  try {
-                    const text = await file.text();
-                    setPodcastScript(text);
-                    setStatus((prev) => [
-                      ...prev,
-                      `✅ Imported script from file: ${file.name}`,
-                    ]);
-                  } catch (err) {
-                    setStatus((prev) => [
-                      ...prev,
-                      `❌ Failed to read file: ${String(err)}`,
-                    ]);
-                  }
-                }}
-              />
-            </label>
-
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-success"
-              onClick={() => {
-                try {
-                  localStorage.setItem("podcastScript", podcastScript || "");
-                  const blob = new Blob([podcastScript || ""], {
-                    type: "text/plain",
-                  });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = "podcast-script.txt";
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                  URL.revokeObjectURL(url);
-                  setStatus((prev) => [
-                    ...prev,
-                    "✅ Exported script to localStorage and downloaded.",
-                  ]);
-                } catch (e) {
-                  setStatus((prev) => [...prev, "❌ Failed to export script."]);
-                }
-              }}
-            >
-              Export Script
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-secondary"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(podcastScript || "");
-                  setStatus((prev) => [
-                    ...prev,
-                    "✅ Script copied to clipboard.",
-                  ]);
-                } catch (e) {
-                  setStatus((prev) => [
-                    ...prev,
-                    "❌ Failed to copy script to clipboard.",
-                  ]);
-                }
-              }}
-            >
-              Copy Script
-            </button>
-          </div>
-        </div>
 
         <div className="mt-4">
           <h5>Status</h5>
