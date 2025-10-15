@@ -414,16 +414,30 @@ export default function PodcastEditor() {
     setGenerating(true);
 
     try {
-      const response = await fetch("/api/scriptToAudio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          segments: cleaned,
-          voiceMode,
-          speaker1Voice,
-          speaker2Voice,
-        }),
-      });
+      let response;
+      if (voiceMode === 2) {
+        response = await fetch("/api/scriptToAudio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            segments: cleaned,
+            voiceMode,
+            speaker1Voice,
+            speaker2Voice: speaker1Voice, // use same voice for both
+          }),
+        });
+      } else {
+        response = await fetch("/api/scriptToAudio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            segments: cleaned,
+            voiceMode,
+            speaker1Voice,
+            speaker2Voice,
+          }),
+        });
+      }
 
       if (!response.ok) {
         const text = await response.text();
@@ -485,21 +499,28 @@ export default function PodcastEditor() {
   // Enhanced import handler: supports .json (ExportSegment[]) and .txt files
   const handleImportFile = async (file: File | null) => {
     if (!file) return;
-    const name = file.name || 'uploaded-file';
+    const name = file.name || "uploaded-file";
     try {
       const text = await file.text();
 
       // Try JSON first
       try {
         const parsed = JSON.parse(text) as ExportSegment[];
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].text !== undefined) {
+        if (
+          Array.isArray(parsed) &&
+          parsed.length > 0 &&
+          parsed[0].text !== undefined
+        ) {
           const mapped: Segment[] = parsed.map((s, idx) => ({
-            id: String(Date.now()) + '-' + idx,
-            speaker: s.speakerIndex === 0 ? 'Speaker 1' : 'Speaker 2',
+            id: String(Date.now()) + "-" + idx,
+            speaker: s.speakerIndex === 0 ? "Speaker 1" : "Speaker 2",
             text: s.text,
           }));
           setSegments(mapped);
-          setStatus((prev) => [...prev, `✅ Imported ${mapped.length} segments from JSON file: ${name}`]);
+          setStatus((prev) => [
+            ...prev,
+            `✅ Imported ${mapped.length} segments from JSON file: ${name}`,
+          ]);
           return;
         }
       } catch (jsonErr) {
@@ -512,42 +533,69 @@ export default function PodcastEditor() {
 
       // If double-newline present, use that
       if (/\n\s*\n/.test(text)) {
-        paragraphs = text.split(/\n\s*\n/).map(p => p.replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+        paragraphs = text
+          .split(/\n\s*\n/)
+          .map((p) => p.replace(/\n/g, " ").trim())
+          .filter((p) => p.length > 0);
       } else if (/^\d+\./m.test(text)) {
         // numbered list
-        paragraphs = text.split(/\n\d+\./).map(p => p.replace(/^\d+\./, '').replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+        paragraphs = text
+          .split(/\n\d+\./)
+          .map((p) =>
+            p
+              .replace(/^\d+\./, "")
+              .replace(/\n/g, " ")
+              .trim()
+          )
+          .filter((p) => p.length > 0);
       } else if (/^[-*]\s+/m.test(text)) {
         // bullet list
-        paragraphs = text.split(/\n[-*]\s+/).map(p => p.replace(/\n/g, ' ').trim()).filter(p => p.length > 0);
+        paragraphs = text
+          .split(/\n[-*]\s+/)
+          .map((p) => p.replace(/\n/g, " ").trim())
+          .filter((p) => p.length > 0);
       } else {
         // Fallback: split by punctuation followed by newline or just by sentences of reasonable length
-        paragraphs = text.split(/\n/).map(p => p.trim()).filter(p => p.length > 0);
+        paragraphs = text
+          .split(/\n/)
+          .map((p) => p.trim())
+          .filter((p) => p.length > 0);
       }
 
       // Heuristic: if paragraphs include speaker labels like 'Speaker 1:' or 'S1:' or 'Host:' then respect labels
-      const labelRegex = /^(?:Speaker\s*1|Speaker\s*2|S1|S2|Host\s*1|Host\s*2|Host):\s*/i;
+      const labelRegex =
+        /^(?:Speaker\s*1|Speaker\s*2|S1|S2|Host\s*1|Host\s*2|Host):\s*/i;
       const mappedSegments: Segment[] = [];
       for (let i = 0; i < paragraphs.length; i++) {
         let p = paragraphs[i];
-        let speaker: 'Speaker 1' | 'Speaker 2' = i % 2 === 0 ? 'Speaker 1' : 'Speaker 2';
+        let speaker: "Speaker 1" | "Speaker 2" =
+          i % 2 === 0 ? "Speaker 1" : "Speaker 2";
         const m = p.match(labelRegex);
         if (m) {
           const label = m[0];
-          p = p.replace(labelRegex, '').trim();
-          if (/1|s1|host\s*1/i.test(label)) speaker = 'Speaker 1';
-          else speaker = 'Speaker 2';
+          p = p.replace(labelRegex, "").trim();
+          if (/1|s1|host\s*1/i.test(label)) speaker = "Speaker 1";
+          else speaker = "Speaker 2";
         }
-        mappedSegments.push({ id: String(Date.now()) + '-' + i, speaker, text: p });
+        mappedSegments.push({
+          id: String(Date.now()) + "-" + i,
+          speaker,
+          text: p,
+        });
       }
 
       setSegments(mappedSegments);
-      setStatus((prev) => [...prev, `✅ Imported ${mappedSegments.length} segments from text file: ${name}`]);
+      setStatus((prev) => [
+        ...prev,
+        `✅ Imported ${mappedSegments.length} segments from text file: ${name}`,
+      ]);
     } catch (err) {
-      setStatus((prev) => [...prev, `❌ Failed to import file: ${String(err)}`]);
+      setStatus((prev) => [
+        ...prev,
+        `❌ Failed to import file: ${String(err)}`,
+      ]);
     }
   };
-
-  
 
   const exportSegmentsAsJSON = () => {
     try {
@@ -579,7 +627,6 @@ export default function PodcastEditor() {
         </p>
 
         <form onSubmit={handleSubmit}>
-
           <div className="form-group my-3 text-center">
             <label className="form-label">Voice Assignment</label>
             <div className="d-flex justify-content-center gap-3 align-items-center">
@@ -609,18 +656,68 @@ export default function PodcastEditor() {
                   Fixed
                 </label>
               </div>
+              <div className="form-check form-check-inline">
+                <input
+                  className="form-check-input"
+                  type="radio"
+                  name="peVoiceMode"
+                  id="peVoiceSingle"
+                  checked={voiceMode === 2}
+                  onChange={() => {
+                    setVoiceMode(2);
+                    if (speaker1Voice !== speaker2Voice) {
+                      setSpeaker2Voice(speaker1Voice);
+                    }
+                  }}
+                />
+                <label className="form-check-label" htmlFor="peVoiceSingle">
+                  Single Voice
+                </label>
+              </div>
             </div>
 
             {voiceMode === 1 && (
               <div className="d-flex justify-content-center gap-2 mt-2">
-                <select className="form-select form-select-sm" value={speaker1Voice} onChange={(e) => setSpeaker1Voice(e.target.value)}>
+                <select
+                  className="form-select form-select-sm"
+                  style={{ width: "250px" }}
+                  value={speaker1Voice}
+                  onChange={(e) => setSpeaker1Voice(e.target.value)}
+                >
                   {AVAILABLE_VOICES.map((v) => (
                     <option key={v} value={v}>
                       {v}
                     </option>
                   ))}
                 </select>
-                <select className="form-select form-select-sm" value={speaker2Voice} onChange={(e) => setSpeaker2Voice(e.target.value)}>
+                <select
+                  className="form-select form-select-sm"
+                  style={{ width: "250px" }}
+                  value={speaker2Voice}
+                  onChange={(e) => setSpeaker2Voice(e.target.value)}
+                >
+                  {AVAILABLE_VOICES.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {voiceMode === 2 && (
+              <div className="d-flex justify-content-center gap-2 mt-2">
+                <select
+                  className="form-select form-select-sm"
+                  style={{ width: "250px" }}
+                  value={speaker1Voice}
+                  onChange={(e) => {
+                    setSpeaker1Voice(e.target.value);
+                    if (speaker1Voice !== speaker2Voice) {
+                      setSpeaker2Voice(speaker1Voice);
+                    }
+                  }}
+                >
                   {AVAILABLE_VOICES.map((v) => (
                     <option key={v} value={v}>
                       {v}
@@ -633,7 +730,11 @@ export default function PodcastEditor() {
             <div className="mt-3">
               <h5>Import / Export Script</h5>
               <div className="d-flex gap-2 justify-content-center">
-                <button type="button" className="btn btn-sm btn-outline-primary" onClick={importSegmentsFromLocal}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-primary"
+                  onClick={importSegmentsFromLocal}
+                >
                   Import Segments from Local
                 </button>
 
@@ -650,7 +751,11 @@ export default function PodcastEditor() {
                   />
                 </label>
 
-                <button type="button" className="btn btn-sm btn-outline-success" onClick={exportSegmentsAsJSON}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-success"
+                  onClick={exportSegmentsAsJSON}
+                >
                   Export Segments (JSON)
                 </button>
 
@@ -660,9 +765,15 @@ export default function PodcastEditor() {
                   onClick={async () => {
                     try {
                       await navigator.clipboard.writeText(podcastScript || "");
-                      setStatus((prev) => [...prev, "✅ Script copied to clipboard."]);
+                      setStatus((prev) => [
+                        ...prev,
+                        "✅ Script copied to clipboard.",
+                      ]);
                     } catch (e) {
-                      setStatus((prev) => [...prev, "❌ Failed to copy script to clipboard."]);
+                      setStatus((prev) => [
+                        ...prev,
+                        "❌ Failed to copy script to clipboard.",
+                      ]);
                     }
                   }}
                 >
@@ -676,8 +787,8 @@ export default function PodcastEditor() {
             {segments.map((seg, idx) => {
               const isLeft = seg.speaker === "Speaker 1";
               const cardStyle: React.CSSProperties = {
-                width: "67%",
-                maxWidth: "67%",
+                width: voiceMode !== 2 ? "67%" : "100%",
+                maxWidth: voiceMode !== 2 ? "67%" : "100%",
                 marginBottom: "8px",
               };
 
@@ -685,7 +796,9 @@ export default function PodcastEditor() {
                 <div
                   key={seg.id}
                   className={`d-flex mb-0 ${
-                    isLeft ? "justify-content-start" : "justify-content-end"
+                    isLeft || voiceMode === 2
+                      ? "justify-content-start"
+                      : "justify-content-end"
                   }`}
                 >
                   <div className="card" style={cardStyle}>
@@ -693,14 +806,24 @@ export default function PodcastEditor() {
                       <div className="d-flex justify-content-between align-items-start mb-2">
                         <div>
                           <strong>
-                            {seg.speaker} — Segment {idx + 1}
+                            {voiceMode === 2
+                              ? `Segment ${idx + 1}`
+                              : `${seg.speaker} — Segment ${idx + 1}`}
                           </strong>
                         </div>
                         <div>
-                          <button type="button" className="btn btn-sm btn-outline-secondary me-1" onClick={() => toggleSpeaker(seg.id)}>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary me-1"
+                            onClick={() => toggleSpeaker(seg.id)}
+                          >
                             Swap
                           </button>
-                          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => removeSegment(seg.id)}>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() => removeSegment(seg.id)}
+                          >
                             Remove
                           </button>
                         </div>
@@ -710,7 +833,9 @@ export default function PodcastEditor() {
                         className="form-control"
                         rows={3}
                         value={seg.text}
-                        onChange={(e) => updateSegmentText(seg.id, e.target.value)}
+                        onChange={(e) =>
+                          updateSegmentText(seg.id, e.target.value)
+                        }
                         placeholder="Enter transcript for this segment"
                       />
                     </div>
@@ -721,16 +846,34 @@ export default function PodcastEditor() {
           </div>
 
           <div className="d-flex gap-2 mt-3">
-            <button type="button" className="btn btn-outline-primary" onClick={addSegment} disabled={generating}>
+            <button
+              type="button"
+              className="btn btn-outline-primary"
+              onClick={addSegment}
+              disabled={generating}
+            >
               + Add Segment
             </button>
-            <button type="button" className="btn btn-outline-info" onClick={distributeLines} disabled={generating || segments.length === 0}>
+            <button
+              type="button"
+              className="btn btn-outline-info"
+              onClick={distributeLines}
+              disabled={generating || segments.length === 0}
+            >
               🔀 Distribute Lines
             </button>
-            <button type="submit" className="btn btn-success" disabled={generating}>
+            <button
+              type="submit"
+              className="btn btn-success"
+              disabled={generating}
+            >
               {generating ? (
                 <>
-                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  <span
+                    className="spinner-border spinner-border-sm me-2"
+                    role="status"
+                    aria-hidden="true"
+                  ></span>
                   Generating...
                 </>
               ) : (

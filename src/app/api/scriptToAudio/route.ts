@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     ];
 
     // If fixed voices requested and both voices provided, use them in order
-    if (voiceMode === 1 && speaker1Voice && speaker2Voice) {
+    if ((voiceMode === 1 || voiceMode === 2) && speaker1Voice && speaker2Voice) {
       voices = [speaker1Voice, speaker2Voice];
     } else if (voiceMode === 0) {
       // randomize default voices for variety
