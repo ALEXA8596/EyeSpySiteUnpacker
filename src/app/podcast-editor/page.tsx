@@ -326,18 +326,6 @@ export default function PodcastEditor() {
     "en-US-Chirp3-HD-Algenib",
   ];
 
-  useEffect(() => {
-    if (voiceMode === 1) {
-      if (speaker1Voice === speaker2Voice) {
-        const other =
-          AVAILABLE_VOICES.find((v) => v !== speaker1Voice) ||
-          AVAILABLE_VOICES[0];
-        setSpeaker2Voice(other);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voiceMode]);
-
   // load bootstrap JS (optional for accordions etc.)
   useEffect(() => {
     import("bootstrap/dist/js/bootstrap.bundle.min.js" as any);
