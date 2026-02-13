@@ -270,7 +270,7 @@ export default function Home() {
 
   const [podcastScript, setPodcastScript] = useState<string>("");
   
-  const [promptVersion, setPromptVersion] = useState<number>(1); // 0 = legacy, 1 = new
+  const [promptVersion, setPromptVersion] = useState<number>(2); // 0 = legacy, 1 = new, 2 = accessible audio (default)
   const [voiceMode, setVoiceMode] = useState<number>(0); // 0 = randomize, 1 = fixed
   const [speaker1Voice, setSpeaker1Voice] = useState<string>('en-US-Chirp3-HD-Sulafat');
   const [speaker2Voice, setSpeaker2Voice] = useState<string>('en-US-Chirp3-HD-Algenib');
@@ -282,6 +282,8 @@ export default function Home() {
   const newPromptTemplate = `Generate a podcast-style audio overview script based on the provided content for "{organizationName}". The output should be a conversational script between two AI hosts discussing the main points, insights, and implications of the input material. Do not include a separate title line; begin directly with the script content. Do not give the podcast a name. Just start talking about the subject.\n\nContext and contact details (use where helpful, but do not read lists verbatim):\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\n\nINSERTBODIESHERE\n\nPodcast Format:... (truncated for UI)`;
 
   const legacyPromptTemplate = `You are an expert script writer. Create a script for an audio overview of the organization "{organizationName}". The script should be informative and conversational. Do not introduce the script with a title. The audience is primarily low vision or blind people. Appropriately use the following details:\n\nWebsite: {websiteURL}\nEmail: {email}\nPhone: {phoneNumber}\nAddress: {address}\nINSERTBODIESHERE\n\nIf applicable, give a list and description of the services and the events that the organization offers. Do not sound like an advertisement... (truncated for UI)`;
+
+  const accessiblePromptTemplate = `You are an expert content creator specializing in accessible audio resources for the low vision and blind community. Your goal is to convert written information about "{organizationName}" into a natural, engaging podcast script.\n\nSTRICT FORMATTING RULES (CRITICAL):\n1. The output must contain ONLY the spoken dialogue.\n2. Do NOT use speaker labels.\n3. Do NOT include titles, scene descriptions, sound effects, or an outline.\n4. SEPARATOR: Every time the speaker switches, insert exactly two new lines.\n5. Ensure the script starts immediately with the first speaker's voice.\n\nHOST PERSONAS:\n- Speaker A (The Guide): Warm, descriptive, and articulate.\n- Speaker B (The Advocate): Curious and practical.\n\nCONTENT GUIDELINES:\n- ZERO FLUFF START: First sentence must name the organization.\n- LANGUAGE: STRICTLY AVOID "visually impaired." Use "low vision" or "blind."\n- Tone: Informative, encouraging, conversational.\n... (truncated for UI)`;
   
   type Segment = { id: string; speaker: 'Speaker 1' | 'Speaker 2'; text: string };
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -618,6 +620,20 @@ export default function Home() {
                       </label>
                     </div>
 
+                    <div className="form-check form-check-inline">
+                      <input
+                        className="form-check-input"
+                        type="radio"
+                        name="promptVersion"
+                        id="promptAccessible"
+                        checked={promptVersion === 2}
+                        onChange={() => setPromptVersion(2)}
+                      />
+                      <label className="form-check-label" htmlFor="promptAccessible">
+                        Accessible Audio Prompt
+                      </label>
+                    </div>
+
                     <div className="form-text small text-muted mt-1">
                       Choose which prompt template to use when generating the podcast script.
                     </div>
@@ -690,10 +706,24 @@ export default function Home() {
                   {/* Prompt Templates Accordion */}
                   <div className="mt-3">
                     <div className="accordion" id="promptTemplatesAccordion">
+
+                      <div className="accordion-item">
+                        <h2 className="accordion-header" id="headingAccessiblePrompt">
+                          <button className="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAccessiblePrompt" aria-expanded="false" aria-controls="collapseAccessiblePrompt">
+                            New and Improved Audio Prompt Template (Feb 12, 2026)
+                          </button>
+                        </h2>
+                        <div id="collapseAccessiblePrompt" className="accordion-collapse collapse" aria-labelledby="headingAccessiblePrompt" data-bs-parent="#promptTemplatesAccordion">
+                          <div className="accordion-body">
+                            <pre style={{ whiteSpace: 'pre-wrap' }}>{accessiblePromptTemplate}</pre>
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="accordion-item">
                         <h2 className="accordion-header" id="headingNewPrompt">
                           <button className="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseNewPrompt" aria-expanded="false" aria-controls="collapseNewPrompt">
-                            New Prompt Template
+                            2nd Prompt Template (Oct 13, 2025)
                           </button>
                         </h2>
                         <div id="collapseNewPrompt" className="accordion-collapse collapse" aria-labelledby="headingNewPrompt" data-bs-parent="#promptTemplatesAccordion">
@@ -706,7 +736,7 @@ export default function Home() {
                       <div className="accordion-item">
                         <h2 className="accordion-header" id="headingLegacyPrompt">
                           <button className="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLegacyPrompt" aria-expanded="false" aria-controls="collapseLegacyPrompt">
-                            Legacy Prompt Template
+                            Original Prompt Template (Aug 2, 2025)
                           </button>
                         </h2>
                         <div id="collapseLegacyPrompt" className="accordion-collapse collapse" aria-labelledby="headingLegacyPrompt" data-bs-parent="#promptTemplatesAccordion">
