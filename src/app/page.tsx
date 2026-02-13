@@ -170,10 +170,10 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
 
     setIsMerging(true);
     const ffmpeg = ffmpegRef.current;
+    const inputFiles: string[] = [];
 
     try {
       // Write input files to FFmpeg filesystem
-      const inputFiles: string[] = [];
       for (let i = 0; i < audioFiles.length; i++) {
         try {
           const fileName = `input${i}.mp3`;
@@ -181,18 +181,11 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
           const audioBuffer = Uint8Array.from(atob(audioData), (c) =>
             c.charCodeAt(0),
           );
-          // Remove any pre-existing file in FFmpeg FS to avoid EEXIST/FS errors
+          // Clean up any existing file first
           try {
-            // Access low-level FS if available
-            if ((ffmpeg as any).FS) {
-              try {
-                (ffmpeg as any).FS("unlink", fileName);
-              } catch (e) {
-                /* ignore if not present */
-              }
-            }
-          } catch (e) {
-            // ignore
+            await ffmpeg.deleteFile(fileName);
+          } catch {
+            // File doesn't exist, that's fine
           }
           await ffmpeg.writeFile(fileName, audioBuffer);
           inputFiles.push(fileName);
@@ -207,21 +200,23 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
 
       // Create concat file list
       const concatList = inputFiles.map((file) => `file '${file}'`).join("\n");
-      // Write concat list as binary to avoid FS text issues
       const encoder = new TextEncoder();
       const concatBytes = encoder.encode(concatList);
+      
+      // Clean up filelist if it exists
       try {
-        if ((ffmpeg as any).FS) {
-          try {
-            (ffmpeg as any).FS("unlink", "filelist.txt");
-          } catch (e) {
-            /* ignore */
-          }
-        }
-      } catch (e) {
-        // ignore
+        await ffmpeg.deleteFile("filelist.txt");
+      } catch {
+        // File doesn't exist, that's fine
       }
       await ffmpeg.writeFile("filelist.txt", concatBytes);
+
+      // Clean up output file if it exists from a previous run
+      try {
+        await ffmpeg.deleteFile("output.mp3");
+      } catch {
+        // File doesn't exist, that's fine
+      }
 
       // Run FFmpeg concat command
       await ffmpeg.exec([
@@ -240,11 +235,12 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
       const data = await ffmpeg.readFile("output.mp3");
       const uint8Array = new Uint8Array(data as unknown as ArrayBuffer);
       const blob = new Blob([uint8Array], { type: "audio/mp3" });
+      
       // Revoke previous merged URL if present
       if (mergedAudioUrl) {
         try {
           URL.revokeObjectURL(mergedAudioUrl);
-        } catch (e) {
+        } catch {
           /* ignore */
         }
       }
@@ -253,27 +249,21 @@ function CombinedAudioPlayer({ audioFiles }: { audioFiles: AudioFiles[] }) {
 
       // Clean up FFmpeg FS temporary files
       try {
-        if ((ffmpeg as any).FS) {
-          try {
-            (ffmpeg as any).FS("unlink", "output.mp3");
-          } catch (e) {
-            /* ignore */
-          }
-          try {
-            (ffmpeg as any).FS("unlink", "filelist.txt");
-          } catch (e) {
-            /* ignore */
-          }
-          for (const f of inputFiles) {
-            try {
-              (ffmpeg as any).FS("unlink", f);
-            } catch (e) {
-              /* ignore */
-            }
-          }
+        await ffmpeg.deleteFile("output.mp3");
+      } catch {
+        /* ignore */
+      }
+      try {
+        await ffmpeg.deleteFile("filelist.txt");
+      } catch {
+        /* ignore */
+      }
+      for (const f of inputFiles) {
+        try {
+          await ffmpeg.deleteFile(f);
+        } catch {
+          /* ignore */
         }
-      } catch (e) {
-        // ignore cleanup errors
       }
     } catch (error) {
       console.error("Error merging audio files:", error);
