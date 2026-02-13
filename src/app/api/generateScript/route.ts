@@ -11,19 +11,35 @@ export async function POST(request: NextRequest) {
     email,
     address,
     phoneNumber,
-    promptType, // 0 - old, 1 - new
+    promptType, // 0 - legacy, 1 - new, 2 - accessible
+    customPrompt, // User-edited prompt (optional)
   } = await request.json();
-  console.log(JSON.stringify({
-    organizationName,
-    websiteURL,
-    email,
-    address,
-    phoneNumber,
-    promptType
-  }));
+  console.log(
+    JSON.stringify({
+      organizationName,
+      websiteURL,
+      email,
+      address,
+      phoneNumber,
+      promptType,
+      customPromptProvided: !!customPrompt,
+    }),
+  );
   let basePrompt: string;
 
-  if (promptType === 0) {
+  // If user provided a custom prompt, use it directly (with variable substitution)
+  if (
+    customPrompt &&
+    typeof customPrompt === "string" &&
+    customPrompt.trim().length > 0
+  ) {
+    basePrompt = customPrompt
+      .replace(/{organizationName}/g, organizationName || "")
+      .replace(/{websiteURL}/g, websiteURL || "")
+      .replace(/{email}/g, email || "")
+      .replace(/{phoneNumber}/g, phoneNumber || "")
+      .replace(/{address}/g, address || "");
+  } else if (promptType === 0) {
     // Legacy prompt
     basePrompt =
       `You are an expert script writer. Create a script for an audio overview of the organization "${organizationName}". The script should be informative and conversational. Do not introduce the script with a title. The audience is primarily low vision or blind people. Appropriately use the following details:\n\n` +
@@ -40,44 +56,37 @@ export async function POST(request: NextRequest) {
     // Accessible Audio prompt
     basePrompt =
       `You are an expert content creator specializing in accessible audio resources for the low vision and blind community. Your goal is to convert written information about "${organizationName}" into a natural, engaging podcast script.\n\n` +
-      
       `STRICT FORMATTING RULES (CRITICAL):\n` +
       `1. The output must contain ONLY the spoken dialogue.\n` +
       `2. Do NOT use speaker labels (e.g., "Host 1:" or "Speaker A:").\n` +
       `3. Do NOT include titles, scene descriptions, sound effects, or an outline.\n` +
-      `4. SEPARATOR: Every time the speaker switches, you must insert exactly two new lines (\\n\\n). This is used to programmatically split the text for Text-To-Speech generation.\n` +
+      `4. SEPARATOR: Separate each speaker's turn with a double line break (two empty lines of whitespace). Do NOT write the literal characters "\\n\\n" or any visible separator tags. Just use blank space.\n` +
       `5. Ensure the script starts immediately with the first speaker's voice.\n\n` +
-
       `INPUT CONTEXT:\n` +
       `Organization: ${organizationName}\n` +
       `Website: ${websiteURL}\n` +
       `Email: ${email}\n` +
       `Phone: ${phoneNumber}\n` +
       `Address: ${address}\n\n` +
-      
       `SOURCE MATERIAL:\n` +
       `"""\n` +
       `INSERTBODIESHERE\n` +
       `"""\n\n` +
-
       `HOST PERSONAS (Alternating speakers):\n` +
       `- Speaker A (The Guide): Warm, descriptive, and articulate. Focuses on the "what" and "where."\n` +
       `- Speaker B (The Advocate): Curious and practical. Focuses on the "how" and "why it matters."\n\n` +
-
       `CONTENT GUIDELINES:\n` +
       `- ZERO FLUFF START: The very first sentence of the script must explicitly name "${organizationName}" and immediately define what it is. Do NOT use phrases like "Welcome back," "Hello listeners," or "Today we are looking at."\n` +
       `- LANGUAGE & TERMINOLOGY: STRICTLY AVOID the term "visually impaired." Instead, use "low vision," "people with low vision," "the low vision community," or "blind" (only where specifically accurate).\n` +
       `- Tone: Informative, encouraging, and conversational. Avoid overly corporate jargon.\n` +
       `- Accessibility Focus: If the content mentions physical locations or visual elements, describe them clearly. If reading a phone number, group the digits naturally for a listener to memorize (e.g. "five-five-five...").\n\n` +
-      
       `STRUCTURE:\n` +
       `   1. Immediate Hook: Start directly with the organization name and its core value proposition.\n` +
       `   2. Overview: Summarize what the organization does.\n` +
       `   3. Deep Dive: Discuss specific programs, events, or resources found in the source text. Discuss why this is useful for the low vision community.\n` +
       `   4. Contact Info: Weave the website or phone number naturally into the end of the conversation.\n` +
       `   5. Sign-off: A brief, warm closing.\n\n` +
-
-      `Generate the script now, strictly following the \\n\\n separator rule.`;
+      `Generate the script now.`;
   } else {
     // New prompt (default for promptType 1, undefined, null, etc.)
     basePrompt =
@@ -121,7 +130,7 @@ export async function POST(request: NextRequest) {
     "INSERTBODIESHERE",
     `Website Body Texts: \n${pageBodies
       .map((text: PageBody) => text.href + "\n" + text.bodyText)
-      .join("\n\n")}`
+      .join("\n\n")}`,
   );
 
   try {
@@ -135,7 +144,7 @@ export async function POST(request: NextRequest) {
 
         if (!tokenResponse || !tokenResponse.totalTokens) {
           console.warn(
-            `Failed to get token count for ${organizationName}, reducing content`
+            `Failed to get token count for ${organizationName}, reducing content`,
           );
           bodyTextsLength--;
           break;
@@ -156,11 +165,11 @@ export async function POST(request: NextRequest) {
       // Prevent infinite loop if we run out of body texts
       if (bodyTextsLength <= 0) {
         console.warn(
-          `Token limit exceeded even with minimal content for ${organizationName}`
+          `Token limit exceeded even with minimal content for ${organizationName}`,
         );
         return NextResponse.json(
           { error: "Token limit exceeded, unable to generate script" },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -169,22 +178,22 @@ export async function POST(request: NextRequest) {
         `Website Body Texts: \n${pageBodies
           .slice(0, bodyTextsLength)
           .map((text: PageBody) => text.href + "\n" + text.bodyText)
-          .join("\n\n")}`
+          .join("\n\n")}`,
       );
 
       console.log(
-        `Reduced to ${bodyTextsLength} body texts, prompt length: ${entirePrompt.length} characters`
+        `Reduced to ${bodyTextsLength} body texts, prompt length: ${entirePrompt.length} characters`,
       );
     }
   } catch (tokenCountError) {
     console.error(
       `Error counting tokens for ${organizationName}:`,
-      tokenCountError
+      tokenCountError,
     );
     // Use a minimal prompt if token counting fails
     entirePrompt = basePrompt.replace(
       "INSERTBODIESHERE",
-      `Website Body Texts: Unable to process content due to technical limitations.`
+      `Website Body Texts: Unable to process content due to technical limitations.`,
     );
   }
 
@@ -205,7 +214,7 @@ export async function POST(request: NextRequest) {
       console.error("Failed to generate script:", response);
       return NextResponse.json(
         { error: "Failed to generate script" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -223,7 +232,7 @@ export async function POST(request: NextRequest) {
     console.error(`Error generating script for ${organizationName}:`, error);
     return NextResponse.json(
       { error: "Failed to generate script" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
